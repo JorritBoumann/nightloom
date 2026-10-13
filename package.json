@@ -1,0 +1,18 @@
+{
+  "name": "nightloom",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A co-op night shift for two: Bramble and Flit weave dreams to order.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "zip": "node tools/build.mjs --zip",
+    "test": "node tools/test.mjs",
+    "sim": "node tools/sim.mjs",
+    "traces": "node tools/traces.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

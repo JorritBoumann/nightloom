@@ -1,0 +1,6 @@
+node_modules/
+dist/
+dist-artifact/
+dist-upload/
+traces/
+.DS_Store

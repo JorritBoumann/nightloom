@@ -1,0 +1,63 @@
+/* Layout: a slim top bar, the fixed-size canvas stage scaled to fit, a two-player legend below.
+   A single dark night world by choice. */
+:root{
+  --sky:#100d24;
+  --panel:#1c1736;
+  --line:#352d5e;
+  --ink:#efe8ff;
+  --dim:#a79cc9;
+  --moon:#f4c96b;
+  --moss:#9bd47a;
+  --moth:#ffb3c7;
+  --danger:#ff5c8a;
+  --display:'Gluten','Trebuchet MS',cursive;
+  --body:'Figtree',system-ui,-apple-system,'Segoe UI',sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{margin:0;background:var(--sky);color:var(--ink);font-family:var(--body);font-size:15px}
+[hidden]{display:none!important}
+.wrap{max-width:1040px;margin:0 auto;padding-inline:16px;padding-block:10px 24px;display:flex;flex-direction:column;gap:10px}
+.top{display:flex;align-items:center;gap:8px;min-height:36px}
+.embedded .top{padding-left:64px}
+.brand{font-family:var(--display);font-weight:700;font-size:20px;color:var(--moon)}
+.spacer{flex:1}
+.top button{font-size:12px;padding:5px 12px}
+.stage{position:relative;width:min(100%,calc((100dvh - 96px) * 784 / 588));margin:0 auto;border-radius:14px;overflow:hidden;background:#0a0818;box-shadow:0 0 0 1px var(--line),0 20px 60px #0008;outline:none}
+.stage:focus-visible{box-shadow:0 0 0 2px var(--moth),0 20px 60px #0008}
+canvas{display:block;width:100%;height:auto;aspect-ratio:784/588}
+.overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:18px;background:radial-gradient(ellipse at 50% 40%,#231c4bdd,#0b0919f2);overflow:auto}
+.overlay.see-through{background:radial-gradient(ellipse at 50% 45%,#1a1540cc,#0b0919d9)}
+.card{max-width:600px;width:100%;display:flex;flex-direction:column;gap:12px;text-align:left;margin:auto}
+.card h1{font-family:var(--display);font-weight:800;font-size:clamp(40px,8vw,72px);line-height:.9;margin:0;color:var(--moon);text-wrap:balance}
+.card h2{font-family:var(--display);font-weight:700;font-size:clamp(28px,5vw,40px);line-height:1;margin:0;text-wrap:balance}
+.card p{margin:0;line-height:1.5;max-width:62ch}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+.btns{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+button{font:700 15px var(--body);border-radius:999px;padding:9px 18px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button.primary{background:var(--moon);color:#2a1d00;border-color:transparent}
+button:disabled{opacity:.4;cursor:not-allowed}
+button:focus-visible{outline:3px solid var(--moth);outline-offset:2px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:13px;padding:6px 12px;font-weight:600}
+.chip b{font-family:var(--display);color:var(--moon);margin-right:2px}
+.chip small{color:var(--dim);font-weight:600;margin-left:4px;font-variant-numeric:tabular-nums}
+.chip.on{border-color:var(--moon);background:#2a2350}
+.recipes{display:flex;flex-wrap:wrap;gap:8px}
+.recipe{display:flex;align-items:center;gap:5px;background:#0004;border:1px solid var(--line);border-radius:10px;padding:5px 9px}
+.recipe b{font-family:var(--display);font-size:16px;margin-right:4px}
+.recipe img{width:22px;height:22px}
+.flow{font-size:13px;color:var(--dim);line-height:1.6}
+.moss{color:var(--moss)}.moth{color:var(--moth)}
+.big{font-family:var(--display);font-size:28px;color:var(--moon)}
+.moons{font-family:var(--display);font-size:44px;letter-spacing:6px;line-height:1}
+.moons .off{opacity:.18}
+.legend{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.who{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.who h3{margin:0;font-family:var(--display);font-size:19px;font-weight:700}
+.who.b h3{color:var(--moss)}
+.who.f h3{color:var(--moth)}
+.who p{margin:0;font-size:13px;color:var(--dim);line-height:1.45}
+kbd{font:600 12px var(--body);background:#0006;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 6px;color:var(--ink)}
+.foot{margin:0;font-size:12px;color:var(--dim)}
+@media (max-width:700px){.legend{grid-template-columns:1fr}}

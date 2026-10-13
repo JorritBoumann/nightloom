@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nightloom cover</title>
+<!-- Cover art for the catalog, drawn with the game's own render code.
+     Render: npm run cover (headless Chrome writes assets/cover.png at 1920x1080). -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gluten:wght@700;800&family=Figtree:wght@600;700&display=swap">
+<style>html,body{margin:0;background:#100d24;overflow:hidden}canvas{display:block;width:1920px;height:1080px}</style>
+</head>
+<body>
+<canvas id="board" width="1920" height="1080"></canvas>
+<script src="../src/data.js"></script>
+<script src="../src/core.js"></script>
+<script src="../src/render.js"></script>
+<script>
+(async () => {
+  try { await Promise.all([document.fonts.load("800 200px Gluten"), document.fonts.load("600 40px Figtree")]); } catch (e) {}
+  newGame(0, {seed:7, countdown:0});
+  S.clock = 1.35;
+  const [B, F] = S.players;
+  // A busy, readable moment: Bramble spins at the loom, Flit carries a star to a glowing kettle.
+  B.x = 6.5; B.y = 2.5; B.fx = 0; B.fy = 1; B.working = true;
+  F.x = 9.4; F.y = 1.55; F.fx = -1; F.fy = 0; F.held = {kind:'star'}; F.moving = true;
+  const g = S.grid;
+  g[3][6].item = {kind:'wool'}; g[3][6].prog = .62;
+  Object.assign(g[0][8].k, {items:['thread','star'], state:'ready', grace:10});
+  Object.assign(g[0][10].k, {items:['moondrop','moondrop','thread'], state:'brewing', need:6, prog:3.6});
+  g[3][4].item = {kind:'thread'};
+  g[1][13].item = {kind:'jar', jar:'dream', contents:['moondrop','moondrop','thread']};
+  g[5][13].count = 1;
+  g[4][13].dirty = 1;
+
+  const W = 1920, H = 1080, sc = 2.5, ox = 1250 - 6.5 * TS * sc, oy = 34;
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  // sky
+  const sky = c.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#0b0920'); sky.addColorStop(1, '#221a52');
+  c.fillStyle = sky; c.fillRect(0, 0, W, H);
+  let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < 420; i++) { c.globalAlpha = .25 + .75 * rnd(); c.fillStyle = '#fff'; const r = rnd() * 2.4 + .4; c.fillRect(rnd() * W, rnd() * H, r, r); }
+  c.globalAlpha = 1;
+  // board
+  c.save(); c.translate(ox, oy); c.scale(sc, sc);
+  for (const r of S.grid) for (const t of r) drawTile(t);
+  for (const r of S.grid) for (const t of r) if (t.item) drawItem(c, t.item, t.x * TS + TS / 2, t.y * TS + TS / 2 - 4, TS * .6);
+  for (const p of [...S.players].sort((a, b) => a.y - b.y)) drawPlayer(p);
+  // sparkles rising from the ready kettle and the loom
+  for (let i = 0; i < 26; i++) { const a = rnd() * 6.28, d = rnd() * 40; c.globalAlpha = .3 + .7 * rnd(); c.fillStyle = i % 3 ? '#aab8ff' : '#ffffff';
+    c.beginPath(); c.arc(8.5 * TS + Math.cos(a) * d * .7, .4 * TS - rnd() * 50 + 20, rnd() * 2.4 + .8, 0, 7); c.fill(); }
+  for (let i = 0; i < 14; i++) { c.globalAlpha = .4 + .6 * rnd(); c.fillStyle = '#c7a8ff'; c.beginPath(); c.arc(6.5 * TS + (rnd() - .5) * 34, 3.3 * TS - rnd() * 30, rnd() * 2 + .8, 0, 7); c.fill(); }
+  c.globalAlpha = 1; c.restore();
+  // night fades over the left of the workshop so the title reads
+  const fade = c.createLinearGradient(0, 0, W * .6, 0);
+  fade.addColorStop(0, '#0d0a24'); fade.addColorStop(.62, '#0d0a24f0'); fade.addColorStop(1, '#0d0a2400');
+  c.fillStyle = fade; c.fillRect(0, 0, W, H);
+  const vig = c.createLinearGradient(0, 0, 0, H); vig.addColorStop(0, '#0b092066'); vig.addColorStop(.2, '#0b092000'); vig.addColorStop(.8, '#0b092000'); vig.addColorStop(1, '#0b092088');
+  c.fillStyle = vig; c.fillRect(0, 0, W, H);
+  // moon
+  const mx = 250, my = 210;
+  const glow = c.createRadialGradient(mx, my, 20, mx, my, 260); glow.addColorStop(0, '#f4c96b55'); glow.addColorStop(1, '#f4c96b00');
+  c.fillStyle = glow; c.fillRect(0, 0, 700, 600);
+  c.fillStyle = '#f8dc93'; c.beginPath(); c.arc(mx, my, 78, 0, 7); c.fill();
+  c.fillStyle = '#0d0a24'; c.beginPath(); c.arc(mx + 34, my - 18, 70, 0, 7); c.fill();
+  // title
+  c.textBaseline = 'alphabetic'; c.textAlign = 'left';
+  c.save(); c.shadowColor = '#f4c96b88'; c.shadowBlur = 40;
+  c.fillStyle = '#f4c96b'; c.font = "800 156px Gluten, 'Trebuchet MS', cursive"; c.fillText('Nightloom', 110, 560);
+  c.restore();
+  c.fillStyle = '#efe8ff'; c.font = "600 48px Figtree, system-ui, sans-serif"; c.fillText('A co-op night shift for two', 118, 650);
+  c.fillStyle = '#a79cc9'; c.font = "600 34px Figtree, system-ui, sans-serif"; c.fillText('Weave dreams to order before the town wakes up', 120, 712);
+  c.font = "700 30px Figtree, system-ui, sans-serif";
+  c.fillStyle = '#9bd47a'; c.fillText('Bramble', 120, 800); const bw = c.measureText('Bramble ').width;
+  c.fillStyle = '#a79cc9'; c.fillText('&', 120 + bw, 800); const aw = c.measureText('& ').width;
+  c.fillStyle = '#ffb3c7'; c.fillText('Flit', 120 + bw + aw, 800);
+  document.title = 'cover-ready';
+})();
+</script>
+</body>
+</html>

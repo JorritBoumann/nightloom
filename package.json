@@ -10,7 +10,8 @@
     "zip": "node tools/build.mjs --zip",
     "test": "node tools/test.mjs",
     "sim": "node tools/sim.mjs",
-    "traces": "node tools/traces.mjs"
+    "traces": "node tools/traces.mjs",
+    "cover": "\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --headless=new --disable-gpu --hide-scrollbars --window-size=1920,1080 --force-device-scale-factor=1 --virtual-time-budget=6000 --allow-file-access-from-files --screenshot=\"$PWD/assets/cover.png\" \"file://$PWD/tools/cover.html\""
   },
   "engines": {
     "node": ">=18"

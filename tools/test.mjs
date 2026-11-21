@@ -3,6 +3,8 @@
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import { SimWorld, HASH_EVERY, KEYFRAME_EVERY, simSource } from '../online/sim.mjs';
+import { convert } from './convert.mjs';
 
 const root = new URL('../src/', import.meta.url);
 const src = ['data.js','core.js','bot.js'].map(f => readFileSync(new URL(f, root), 'utf8')).join('\n');
@@ -99,6 +101,69 @@ test('two bots earn at least one moon on every shift', () => {
     G.run(400, true);
     assert.ok(G.moonsFor(S.score, S.L) >= 1, `${S.L.name}: ${S.score}`);
   }
+});
+
+// ---- online play: a recorded round must replay exactly from the seed and the inputs ----
+function recordRound(shift, seed, seats, steps, inputAt) {
+  const w = new SimWorld();
+  w.start(shift, seed, seats);
+  const info = JSON.parse(JSON.stringify(w.info()));
+  const L = [{ type: 'header', schema: 'nightloom-online-v1', game: 'nightloom', version: 'test', room: 'TEST', episode: 1, seed,
+    shift: { index: shift, id: info.id, name: info.name }, tick_hz: 60, core_sha256: simSource().sha256, build: { sim_sha256: simSource().sha256 },
+    seats: seats.map((s, i) => ({ seat: i, actor: i, role: s.role, kind: s.controller === 'bot' ? 'server-bot' : 'human', controller: s.controller === 'bot' ? 'bot:test' : 'human',
+      replay: s.controller === 'bot' ? 'bot.js' : 'inputs', player_id: s.controller === 'bot' ? null : 'TEST0000' })) }];
+  const J = (o) => JSON.parse(JSON.stringify(o));
+  L.push({ type: 'keyframe', t: 0, state: J(w.full()) }, { type: 'hash', t: 0, ...w.hashes() });
+  for (let t = 1; t <= steps && !w.over; t++) {
+    const inputs = seats.map((s, i) => s.controller === 'bot' ? null : inputAt(t, i));
+    const r = w.step(inputs);
+    L.push({ type: 'step', t, in: r.applied.map((a, i) => [...J(a), seats[i].controller === 'bot' ? 'b' : 'f']) });
+    for (const e of r.events) L.push({ type: 'event', t, ...J(e) });
+    if (t % HASH_EVERY === 0) L.push({ type: 'hash', t, ...w.hashes() });
+    if (t % KEYFRAME_EVERY === 0) L.push({ type: 'keyframe', t, state: J(w.full()) });
+    if (t % 60 === 0) seats.forEach((s, i) => { if (s.controller !== 'bot') L.push({ type: 'net', t, kind: 'input', actor: i }); });
+  }
+  const sum = J(w.summary());
+  L.push({ type: 'summary', outcome: sum.over ? 'success' : 'abandon', reason: sum.over ? 'time_up' : 'left', ...sum });
+  return L;
+}
+// a person-like input stream: keys change every few steps, presses now and then, sometimes two in one step
+function keys(seed) {
+  let a = seed >>> 0;
+  const rnd = () => { a = (a + 0x6D2B79F5) >>> 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  let held = { x: 0, y: 0, act: false };
+  return (t) => {
+    if (t % 9 === 0) held = { x: [-1, 0, 1][Math.floor(rnd() * 3)], y: [-1, 0, 1][Math.floor(rnd() * 3)], act: rnd() < .2 };
+    const p = rnd();
+    const pr = p < .03 ? 'g' : p < .045 ? 'a' : p < .05 ? 'ga' : '';
+    return { ...held, x: held.x * (rnd() < .1 ? .73 : 1), pr };
+  };
+}
+
+test('an online round with a person and a bot replays exactly (hashes, keyframes, events, bot inputs)', () => {
+  const k = keys(7);
+  const L = recordRound(4, 99, [{ role: 'bramble', controller: 'human' }, { role: 'flit', controller: 'bot' }], 1500, (t) => k(t));
+  const r = convert(L);
+  for (const c of r.checks) assert.ok(c.ok, `${c.id}: ${c.detail}`);
+  assert.ok(r.events > 20, 'events recorded');
+});
+
+test('two people on Midnight replay exactly to the end of the shift', () => {
+  const k0 = keys(11), k1 = keys(12);
+  const L = recordRound(1, 4242, [{ role: 'bramble', controller: 'human' }, { role: 'flit', controller: 'human' }], 1e6, (t, i) => (i ? k1 : k0)(t));
+  const r = convert(L);
+  for (const c of r.checks) assert.ok(c.ok, `${c.id}: ${c.detail}`);
+  assert.equal(r.steps, 165 * 60);
+});
+
+test('one changed input is caught by the replay check', () => {
+  const k = keys(3);
+  const L = recordRound(0, 5, [{ role: 'bramble', controller: 'human' }, { role: 'flit', controller: 'bot' }], 900, (t) => k(t));
+  const step = L.find((l) => l.type === 'step' && l.t === 300);
+  step.in[0][0] = step.in[0][0] === 1 ? -1 : 1;   // flip one movement value
+  const r = convert(L);
+  assert.ok(!r.ok, 'a tampered recording must fail');
+  assert.ok(r.checks.some((c) => !c.ok && (c.id === 'every_hash_matches' || c.id === 'events_replay')));
 });
 
 console.log(`\n${passed} tests passed`);

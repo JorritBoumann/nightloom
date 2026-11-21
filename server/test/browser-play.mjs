@@ -4,6 +4,7 @@
 // keyboard path, the lobby, the network and the recording are all used.
 //
 //   node test/browser-play.mjs local --server ws://HOST:PORT [--shift 1] [--helper <sandboxed-browser.mjs>] [--dns a,b]
+//   node test/browser-play.mjs url --url https://... [--shift 1] [--helper ...] [--dns ...]
 //   node test/browser-play.mjs frame --handoff <file> [--shift 1] [--helper ...] [--dns ...]
 //
 // local: serves dist/index.html at http://nightloom.test/ through request
@@ -54,6 +55,7 @@ async function main() {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e).slice(0, 300)));
+  page.on('response', (r) => { if (r.status() >= 400) log(`  http ${r.status()} ${r.url().replace(/[?#].*$/, '')}`); });
   page.on('console', (m) => { if (m.type() === 'error' && !(mode === 'local' && /Failed to load resource: net::ERR_FAILED/.test(m.text()))) errors.push(m.text().slice(0, 300)); });
   if (mode === 'local') {
     const server = opt('--server', 'ws://172.17.0.1:2599');
@@ -61,16 +63,29 @@ async function main() {
     await page.route('http://nightloom.test/**', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: html }));
     await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.abort());
     await page.goto(`http://nightloom.test/index.html?COOP_SERVER_URL=${encodeURIComponent(server)}`, { waitUntil: 'load' });
+  } else if (mode === 'url') {
+    await page.goto(opt('--url', 'https://nightloom-production.up.railway.app/'), { waitUntil: 'load' });
   } else if (mode === 'frame') {
     const file = opt('--handoff', '');
     const h = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!h.previewLaunchEndpoint || !h.previewLaunchToken) throw new Error('handoff file has no launch endpoint or token');
-    // The play page takes the launch token by POST (as Creator's preview button does).
-    await page.setContent(`<form id=f method=post action="${h.previewLaunchEndpoint.replace(/"/g, '')}"><input type=hidden name=token></form>`);
-    await page.evaluate((tok) => { const f = document.getElementById('f'); f.token.value = tok; f.submit(); }, h.previewLaunchToken);
+    // The play page takes the launch token by POST from a portal origin (as Creator's preview does).
+    await page.goto('https://creator.stateloop.ai/', { waitUntil: 'domcontentloaded' });
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'commit' }),
+      page.evaluate(({ endpoint, token }) => {
+        const form = document.createElement('form');
+        form.method = 'POST'; form.action = endpoint;
+        const input = document.createElement('input');
+        input.type = 'hidden'; input.name = 'token'; input.value = token;
+        form.appendChild(input); document.body.appendChild(form);
+        HTMLFormElement.prototype.submit.call(form);
+      }, { endpoint: h.previewLaunchEndpoint, token: h.previewLaunchToken }),
+    ]);
+    h.previewLaunchToken = ''; fs.rmSync(file, { force: true });
     await page.waitForLoadState('load');
   } else {
-    throw new Error('mode must be local or frame');
+    throw new Error('mode must be local, url or frame');
   }
   const frame = await gameFrame(page);
   log('game frame', frame.url().replace(/\?.*$/, ''));

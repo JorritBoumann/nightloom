@@ -92,13 +92,13 @@ function runBot(name, room, { delayMs = 0, onEnded }) {
 async function main() {
   const shifts = [...SHIFTS];
   const ca = new Client(URL_);
-  const a = await ca.create('night', { name: 'Test bot A', bot: true, private: true, role: ROLE, withBot: mode === 'withbot', shift: shifts[0] });
+  const a = await ca.create('night', { name: 'Test bot A', bot: true, controller: 'netcore-autopilot@1', private: true, role: ROLE, withBot: mode === 'withbot', shift: shifts[0] });
   await firstPatch(a);
   console.log(`room ${a.roomId} (${mode}), shifts ${shifts.join(',')}, delay ${DELAY} ms on A`);
   let b = null;
   if (mode === 'pair') {
     const cb = new Client(URL_);
-    b = await cb.joinById(a.roomId, { name: 'Test bot B', bot: true });
+    b = await cb.joinById(a.roomId, { name: 'Test bot B', bot: true, controller: 'netcore-autopilot@1' });
     await firstPatch(b);
   }
   let done = 0;
@@ -111,15 +111,15 @@ async function main() {
       setTimeout(() => {
         a.send('shift', { shift: shifts[done] });
         if (SWAP) a.send('swap', {});
-        setTimeout(() => { a.send('ready', { hints: false }); if (b) b.send('ready', { hints: false }); }, 300);
+        setTimeout(() => { a.send('ready', { hints: false, comms: 'none' }); if (b) b.send('ready', { hints: false, comms: 'none' }); }, 300);
       }, 500);
     };
     bots.push(runBot('A', a, { delayMs: DELAY, onEnded }));
     if (b) bots.push(runBot('B', b, {}));
   });
   await new Promise((r) => setTimeout(r, 300));
-  a.send('ready', { hints: false });
-  if (b) b.send('ready', { hints: false });
+  a.send('ready', { hints: false, comms: 'none' });
+  if (b) b.send('ready', { hints: false, comms: 'none' });
   const t = setInterval(() => {
     const s = a.state;
     const pl = [];

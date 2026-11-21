@@ -18,7 +18,8 @@ const pkg = JSON.parse(readFileSync(out('package.json'), 'utf8'));
 
 const SERVER_URL = (process.env.COOP_SERVER_URL || '').trim();
 if (SERVER_URL && !/^wss?:\/\/[^\s"'<>]+$/.test(SERVER_URL)) throw new Error(`COOP_SERVER_URL must be a ws:// or wss:// address, got ${JSON.stringify(SERVER_URL)}`);
-let BUILD_ID = process.env.NIGHTLOOM_BUILD || '';
+// Build id for recordings: NIGHTLOOM_BUILD, else the commit (GITHUB_SHA in GitHub Actions, else git), else the version.
+let BUILD_ID = process.env.NIGHTLOOM_BUILD || (process.env.GITHUB_SHA ? process.env.GITHUB_SHA.slice(0, 12) : '');
 if (!BUILD_ID) { try { BUILD_ID = execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], {cwd: new URL('..', import.meta.url), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']}).trim(); } catch { BUILD_ID = pkg.version; } }
 const SDK_FILE = out('node_modules/@colyseus/sdk/dist/colyseus.js');
 const SDK = existsSync(SDK_FILE) ? readFileSync(SDK_FILE, 'utf8').replace(/<\/(script)/gi, '<\\/$1') : '';

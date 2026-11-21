@@ -163,8 +163,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const lines = readLines(f);
     const base = path.basename(f).replace(/\.jsonl(\.gz)?$/, '');
     const tag = `${lines[0]?.room || 'room'}-${base}`;
+    const key = f.replace(/\\/g, '/').replace(/^.*?(?=nightloom\/\d{4}-\d{2}-\d{2}\/)/, '');  // the bucket key when the path holds one
     const r = convert(lines, {
-      name: f,
+      name: key,
       write: CHECK_ONLY ? null : (text) => fs.writeFileSync(path.join(OUT, `${tag}.trace-v2.jsonl`), text),
     });
     results.push(r);

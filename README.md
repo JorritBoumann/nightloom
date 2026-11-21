@@ -12,6 +12,10 @@ npm run build
 
 Then open `dist/index.html` in a browser, or serve the folder with any static server.
 
+## Play online
+
+Two people in two places can play one shift together, or one person can play with a bot on the server. The server runs the same `data.js`, `core.js` and `bot.js` as the browser, and it records each round so that the round replays exactly. See [PLAY_ONLINE.md](PLAY_ONLINE.md) for players and [Online play: how it works](#online-play-how-it-works) for developers.
+
 ## How a shift works
 
 1. Orders appear at the top of the screen. Each order names a dream and its ingredients.
@@ -117,6 +121,29 @@ The co-op design gives clear examples of handing off work to a teammate who has 
 The source files are concatenated in this order: `data.js`, `core.js`, `bot.js`, `render.js`, `input.js`, `audio.js`, `ui.js`. The first three files are the headless game. The other four files are the browser layer.
 
 The moon thresholds come from `npm run sim`. Two expert bots score about 360 on Dusk, 420 on Midnight, 315 on Gale, 330 on Witching Hour and 385 on Daybreak. One moon sits near a quarter of that, and three moons near 80 percent.
+
+## Online play: how it works
+
+| Part | Files | What it does |
+| --- | --- | --- |
+| Step driver | `online/sim.mjs` | Loads the unchanged `data.js`, `core.js` and `bot.js` into one VM context for each room. Runs one step of 1/60 s in the order of the offline loop: presses, held keys, bots, `update()`. |
+| Server | `server/src/` | A Colyseus 0.18 room with two seats, a lobby, a bot seat and role swaps. It records each round as `nightloom-online-v1`. |
+| Browser | `src/netcore.js`, `src/net.js` | The online lobby. Sends one input frame for each step, predicts the movement of your own character and draws the state from the server. |
+| Replay check | `tools/convert.mjs` | Replays each recording from the seed and the inputs, compares every hash, keyframe and event, and writes `nightloom-trace-v2`. |
+
+The game rules do not change. Online, a key press is applied at the start of a defined server step, and the recording keeps the order of the presses.
+
+To run it locally:
+
+```bash
+npm ci && (cd server && npm ci)
+COOP_SERVER_URL=ws://localhost:2567 npm run build
+(cd server && npm start)                     # recordings go to server/.recordings
+URL=ws://localhost:2567 node server/test/bots.mjs pair --shifts 1
+node tools/convert.mjs server/.recordings --check-only
+```
+
+Without `COOP_SERVER_URL`, the build has no **Play online** button. The offline modes and the single-file build work as before.
 
 ## Ownership
 

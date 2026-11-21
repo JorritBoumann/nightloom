@@ -106,6 +106,8 @@ export const NightState = schema({
   outcome: t.string().default(''), reason: t.string().default(''),
   moons: t.uint8().default(0),
   withBot: t.boolean().default(false),
+  botType: t.string().default('jorrit'),  // the server bot: 'script' (blind script, sees only the screen) or 'jorrit' (the game's bot.js)
+  scripts: t.boolean().default(false),    // the blind scripts are on this server
   suggest: t.uint8().default(0),        // the shift the lobby suggests next (Dusk warm-up, then Midnight, then Daybreak)
   rounds: t.uint16().default(0),        // finished rounds in this room; roles swap after every second one
   dt: t.number().default(1 / 60),       // game seconds per step: 1/60, or 1/(60 k) in a robot room

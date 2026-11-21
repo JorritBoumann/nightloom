@@ -131,13 +131,13 @@ const NET=(()=>{
   function lobby(st){
     const sid=N.room.sessionId,me=st.players.get(sid);if(!me)return;
     const seats=[null,null];st.players.forEach((q,key)=>{seats[q.slot]={q,key}});
-    const sig=JSON.stringify([st.phase,st.code,seats.map(s=>s&&[s.key,s.q.name,s.q.kind,s.q.ready,s.q.comms,s.q.newcomer]),st.shift,st.suggest,st.outcome,st.score,st.swapped,st.episode,N.msg,prof.rating,save.settings.hints]);
+    const sig=JSON.stringify([st.botType,st.scripts,st.phase,st.code,seats.map(s=>s&&[s.key,s.q.name,s.q.kind,s.q.ready,s.q.comms,s.q.newcomer]),st.shift,st.suggest,st.outcome,st.score,st.swapped,st.episode,N.msg,prof.rating,save.settings.hints]);
     if(sig===N.sig&&!ov.hidden)return;N.sig=sig;
     const L=LEVELS[st.shift],ended=st.phase==='ended'&&st.episode>0;
     const seatHTML=(s,i)=>{const role=i===0?'Bramble':'Flit',cls=i===0?'b':'f';
       if(!s)return`<div class="who ${cls}"><h3>${role}</h3><p>Waiting for a partner…</p></div>`;
       const q=s.q,mine=s.key===sid;
-      return`<div class="who ${cls}"><h3>${role}${mine?' <small>(you)</small>':''}</h3><p><b>${esc(q.kind==='server-bot'?'Bot partner':q.name)}</b>${q.kind==='test-bot'?' (test bot)':''}</p><p>${q.ready?'Ready ✓':'Not ready'}</p></div>`};
+      return`<div class="who ${cls}"><h3>${role}${mine?' <small>(you)</small>':''}</h3><p><b>${esc(q.kind==='server-bot'?(st.botType==='script'?'Bot partner':'Bot partner (game bot)'):q.name)}</b>${q.kind==='test-bot'?' (test bot)':''}</p><p>${q.ready?'Ready ✓':'Not ready'}</p></div>`};
     const chips=LEVELS.map((l,i)=>`<button type="button" class="chip${st.shift===i?' on':''}" data-i="${i}" aria-pressed="${st.shift===i}"><b>${i+1}</b> ${l.name}${st.suggest===i?' <small>next</small>':''}</button>`).join('');
     const alone=!seats[0]||!seats[1];
     const res=ended?`<h2>${esc(LEVELS[S&&S.L?S.lvl:st.shift].name)}: ${st.score} moonlight</h2>${moonHTML(st.moons)}
@@ -155,6 +155,7 @@ const NET=(()=>{
       <div class="btns"><button type="button" class="primary" id="nlReady" ${me.comms?'':'disabled'}>${me.ready?'Not ready':'Ready'}</button>
         <button type="button" id="nlSwap">Swap roles</button>
         ${!seats[0]||!seats[1]||st.withBot?`<button type="button" id="nlBotT">${st.withBot?'Remove the bot':'Play with the bot'}</button>`:''}
+        ${st.withBot&&st.scripts?`<button type="button" id="nlBotK">Bot: ${st.botType==='script'?'new bot':'game bot'}</button>`:''}
         <button type="button" id="nlHints">Hints in Dusk: ${save.settings.hints?'on':'off'}</button>
         <button type="button" id="nlLeave">Leave room</button></div>
       <p class="flow">${controls(me.role)} <b>No voice and no chat while you play.</b></p>
@@ -165,6 +166,7 @@ const NET=(()=>{
     $('nlReady').onclick=()=>{initAudio();N.room.send('ready',{ready:!me.ready,hints:!!save.settings.hints,comms:me.comms||undefined,...audio()})};
     $('nlSwap').onclick=()=>N.room.send('swap',{});
     if($('nlBotT'))$('nlBotT').onclick=()=>N.room.send('bot',{on:!st.withBot});
+    if($('nlBotK'))$('nlBotK').onclick=()=>N.room.send('botType',{type:st.botType==='script'?'jorrit':'script'});
     $('nlHints').onclick=()=>{save.settings.hints=!save.settings.hints;persist();N.sig='';lobby(st)};
     $('nlLeave').onclick=()=>{N.leaving=true;N.room.leave(true)};
   }

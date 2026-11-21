@@ -11,8 +11,12 @@ import { NightState, Player, Obj, Order, Applied, InputCmd } from './schema.js';
 import { SimWorld, simSource, TICK_HZ, HASH_EVERY, KEYFRAME_EVERY, ROLES, plain } from '../../online/sim.mjs';
 import { EpisodeRecorder, flushUploads, getJson, putJson, PLAYERS_PREFIX } from './recording.js';
 import { registerRobotRoom, unregisterRobotRoom, robotLinkEnabled } from './robotLink.js';
+import { loadScripts, ScriptSeat } from './scriptSeat.js';
 
 const SOURCE = simSource(new URL('../../src/', import.meta.url));
+const SCRIPTS = await loadScripts();   // the blind scripts, when the deploy copied them in
+// Robot rooms run the pinned core with the S.lab.receiving line (stream B2) when this folder is set.
+const ROBOT_SOURCE = process.env.NIGHTLOOM_ROBOT_CORE_DIR ? simSource(new URL(`file://${process.env.NIGHTLOOM_ROBOT_CORE_DIR.replace(/\/?$/, '/')}`)) : null;
 const MANIFEST = JSON.parse(fs.readFileSync(new URL('../../stateloop.coop.json', import.meta.url), 'utf8'));
 const GAME_VERSION = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version;
 const SERVER_PKG = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -40,7 +44,7 @@ const FOCUS = new Set(['blur', 'focus', 'hidden', 'visible']);
 const DEVICES = ['keyboard', 'gamepad', 'touch'];
 const SHIFT = { dusk: 0, midnight: 1, daybreak: 4 };
 const STEP_ORDER = 'per step: presses of human seats (Bramble first, in press order: g = grab(p), a = actDown(p)); held input p.in of human seats; botStep(p, 1/60) of bot seats (Bramble first); update(1/60). Same order as the offline loop in src/ui.js.';
-const ROW = 'step "in"[actor] = [x, y, act, presses, src, skipped, frame, client_ms, recv_ms]: the applied input; src f fresh frame, r repeated (no frame, at most 15 steps), i idle (no frame for longer), n no frame yet, d disconnected, b server bot; frame = index of the client frame used (1-based, as the client counts sends), client_ms = the client clock in that frame, recv_ms = when the server received it, ms after the episode start. Bot rows end at src.';
+const ROW = 'step "in"[actor] = [x, y, act, presses, src, skipped, frame, client_ms, recv_ms]: the applied input; src f fresh frame, r repeated (no frame, at most 15 steps), i idle (no frame for longer), n no frame yet, d disconnected, b server bot running bot.js in the simulation, S server bot playing a blind script (its keys are recorded as inputs), R robot (robot rows add work and receive); frame = index of the client frame used (1-based, as the client counts sends), client_ms = the client clock in that frame, recv_ms = when the server received it, ms after the episode start. Bot rows end at src.';
 
 const cleanName = (s) => String(s || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 16);
 const cleanStr = (s, n = 64) => String(s ?? '').replace(/[\u0000-\u001f]/g, '').slice(0, n);
@@ -66,6 +70,7 @@ export class NightRoom extends Room {
     shift: (client, msg) => this.onShift(client, msg),
     bot: (client, msg) => this.onBot(client, msg),
     ready: (client, msg) => this.onReady(client, msg),
+    botType: (client, msg) => this.onBotType(client, msg),
     comms: (client, msg) => this.onComms(client, msg),
     profile: (client, msg) => this.onProfile(client, msg),
     client: (client, msg) => this.onClientInfo(client, msg),
@@ -89,6 +94,9 @@ export class NightRoom extends Room {
     this.state.suggest = this.state.shift;
     this.wantBot = !!options.withBot && !options.robot;
     this.state.withBot = this.wantBot;
+    this.state.scripts = !!SCRIPTS;
+    this.state.botType = SCRIPTS && options.botType !== 'jorrit' ? 'script' : 'jorrit';
+    this.scriptSeat = null;
     this.robot = null;
     if (options.robot) {
       // Robot room (live test): an outside process drives the Flit seat over the robot link.
@@ -186,9 +194,9 @@ export class NightRoom extends Room {
       } else if (m.type === 'act') {
         const num2 = (v) => (Array.isArray(v) && v.length === 2 && v.every(Number.isInteger) ? [v[0], v[1]] : null);
         const acts = (Array.isArray(m.actions) ? m.actions : []).slice(0, 8)
-          .map((a) => ({ v: a?.verb === 'use' ? 'u' : a?.verb === 'tip' ? 't' : '', c: num2(a?.cell) })).filter((a) => a.v && a.c);
+          .map((a) => ({ v: a?.verb === 'use' ? 'u' : a?.verb === 'tip' ? 't' : a?.verb === 'lose' ? 'l' : '', c: num2(a?.cell) })).filter((a) => a.v === 'l' || (a.v && a.c));
         r.queue.push({ seq: Number(m.seq) || 0, x: num(m.x, -2, 40), y: num(m.y, -2, 40), work: num2(m.work), receive: m.receive === true,
-          pr: acts.map((a) => `${a.v}${a.c[0]},${a.c[1]}`).join(';'), at: Date.now() });
+          pr: acts.map((a) => (a.v === 'l' ? 'l' : `${a.v}${a.c[0]},${a.c[1]}`)).join(';'), at: Date.now() });
         if (r.queue.length > 240) r.queue.shift();
       }
     });
@@ -377,6 +385,13 @@ export class NightRoom extends Room {
     this.resetReady();
     this.updateLock();
   }
+  /** Which server bot plays the bot seat: the blind script (default) or the game's own bot. */
+  onBotType(client, msg) {
+    if (!this.inLobby() || !this.state.players.has(client.sessionId)) return;
+    const type = msg?.type === 'script' && SCRIPTS ? 'script' : msg?.type === 'jorrit' ? 'jorrit' : null;
+    if (type && type !== this.state.botType) { this.state.botType = type; this.resetReady(); }
+  }
+
   onReady(client, msg) {
     const p = this.state.players.get(client.sessionId);
     if (!p || !this.inLobby()) return;
@@ -455,10 +470,13 @@ export class NightRoom extends Room {
   startCountdown() {
     const seats = [0, 1].map((slot) => {
       const [key, p] = this.playerAt(slot);
-      return { slot, key, role: ROLES[slot], kind: p.kind, sim: p.kind === 'server-bot' ? 'bot' : p.kind === 'robot' ? 'robot' : 'human' };
+      const script = p.kind === 'server-bot' && this.state.botType === 'script' && !!SCRIPTS;
+      return { slot, key, role: ROLES[slot], kind: p.kind, script, sim: p.kind === 'server-bot' && !script ? 'bot' : p.kind === 'robot' ? 'robot' : 'human' };
     });
     const seed = crypto.randomInt(0, 2 ** 32 - 1) >>> 0;
-    this.world = new SimWorld(SOURCE);
+    const scripted = seats.find((s) => s.script);
+    this.scriptSeat = scripted ? new ScriptSeat(SCRIPTS, scripted.role, seed) : null;
+    this.world = new SimWorld(this.robot && ROBOT_SOURCE ? ROBOT_SOURCE : SOURCE);
     this.world.start(this.state.shift, seed, seats.map((s) => ({ role: s.role, controller: s.sim })), { dt: this.robot ? this.robot.dt : 1 / TICK_HZ });
     if (this.robot) { this.robot.pose = null; this.robot.queue = []; }
     this.episodeSeats = seats;
@@ -491,6 +509,11 @@ export class NightRoom extends Room {
         return { seat: e.slot, actor: e.slot, role: e.role, controller: `robot:${r.policy || 'unknown'}`, kind: 'robot', replay: 'robot',
           robot_version: r.version || null, player_id: null, client_id: null, consent: null, input_device: null, client: null, audio_on: null, rounds_before: null, self_rating: null, comms: null, hints: null };
       }
+      if (e.kind === 'server-bot' && e.script) {
+        return { seat: e.slot, actor: e.slot, role: e.role, controller: this.scriptSeat.controller, kind: e.kind, replay: 'inputs', bot_react: null,
+          script: this.scriptSeat.describe(),
+          player_id: null, client_id: null, consent: null, input_device: null, client: null, audio_on: null, rounds_before: null, self_rating: null, comms: null, hints: null };
+      }
       if (e.kind === 'server-bot') {
         return { seat: e.slot, actor: e.slot, role: e.role, controller: BOT_CONTROLLER, kind: e.kind, replay: 'bot.js', bot_react: 0.22,
           player_id: null, client_id: null, consent: null, input_device: null, client: null, audio_on: null, rounds_before: null, self_rating: null, comms: null, hints: null };
@@ -514,15 +537,16 @@ export class NightRoom extends Room {
     this.rec = new EpisodeRecorder({
       game: 'nightloom', version: GAME_VERSION,
       game_commit: process.env.NIGHTLOOM_GAME_COMMIT || BUILD.split('+')[0],
-      core_sha256: SOURCE.sha256, core_files: ['src/data.js', 'src/core.js', 'src/bot.js'],
+      core_sha256: w.source.sha256, core_files: ['src/data.js', 'src/core.js', 'src/bot.js'],
+      core_dir: w.source === SOURCE ? 'src' : 'robot core (NIGHTLOOM_ROBOT_CORE_DIR)',
       online_build: { server: BUILD, clients: [...new Set(humanSeats.map((s) => s.client?.build).filter(Boolean))] },
-      build: { build_sha: BUILD, sim_sha256: SOURCE.sha256, server: SERVER_PKG.name, node: process.version, colyseus: SERVER_PKG.dependencies.colyseus },
+      build: { build_sha: BUILD, sim_sha256: w.source.sha256, server: SERVER_PKG.name, node: process.version, colyseus: SERVER_PKG.dependencies.colyseus },
       session_id: this.sessionId, room_id: this.roomId, room: this.roomId, room_created: created, room_created_ms: this.createdAt,
       visit_id: this.visitId, round_in_visit: this.state.episode, episode: this.state.episode, pair_formed_by: formed, room_private: this.isPrivate,
       comms, hints_shown: hintsShown,
       seed: w.S.seed, shift: { index: info.shift, id: info.id, name: info.name },
       tick_rate: TICK_HZ, tick_hz: TICK_HZ, dt: this.robot ? this.robot.dt : 1 / TICK_HZ, countdown_s: COUNTDOWN_S,
-      robot: this.robot ? { k: this.robot.k, policy: this.robot.policy, version: this.robot.version, lab_core: false, obs_every: OBS_EVERY, link: 'server/src/robotLink.js' } : null,
+      robot: this.robot ? { k: this.robot.k, policy: this.robot.policy, version: this.robot.version, lab_core: /S\.lab\b/.test(w.source.text), obs_every: OBS_EVERY, link: 'server/src/robotLink.js' } : null,
       hash_every: HASH_EVERY, keyframe_every: KEYFRAME_EVERY,
       step_order: STEP_ORDER, row_format: ROW,
       input_rules: { max_backlog_frames: MAX_BACKLOG, repeat_ticks: HOLD_TICKS, grip_ticks: GRIP_TICKS, max_presses: MAX_PRESSES, reconnect_s: RECONNECT_S },
@@ -615,7 +639,10 @@ export class NightRoom extends Room {
     for (let slot = 0; slot < 2; slot++) {
       const [key, p] = this.playerAt(slot);
       if (!p) { inputs[slot] = { x: 0, y: 0, act: false, pr: '' }; meta[slot] = { src: 'd', skipped: 0, frame: null }; continue; }
-      if (p.kind === 'server-bot') continue;
+      if (p.kind === 'server-bot') {
+        if (this.scriptSeat && this.scriptSeat.role === ROLES[slot]) { inputs[slot] = this.scriptSeat.input(w); meta[slot] = { src: 'S', skipped: 0, frame: null }; }
+        continue;
+      }
       if (p.kind === 'robot') { const r = this.takeRobot(t); inputs[slot] = r.inp; meta[slot] = r; continue; }
       const r = this.takeInput(key, p, t);
       inputs[slot] = r.inp;

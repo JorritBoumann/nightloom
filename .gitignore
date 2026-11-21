@@ -7,3 +7,4 @@ traces/
 .recordings/
 converted/
 server/public/
+server/scripts/

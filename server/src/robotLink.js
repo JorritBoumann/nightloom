@@ -7,11 +7,14 @@
 //
 // robot -> room
 //   {type:'hello', policy:'<policy id>', version:'<controller version>'}
-//   {type:'act', seq, x, y, work:[cx,cy]|null, receive:bool, actions:[{verb:'use'|'tip', cell:[cx,cy]}]}
+//   {type:'act', seq, x, y, work:[cx,cy]|null, receive:bool, actions:[{verb:'use'|'tip', cell:[cx,cy]} | {verb:'lose'}]}
 //      x, y: the gripper position in tile units (the Flit proxy stands there).
 //      actions: interactions that are due now (the effect moment), applied at the next step in this order.
 //      work: hold the work key at the basin cell (washing) until a later message clears it.
 //      receive: the gripper is in the receive pose (a thrown item can be caught).
+//      lose: the held item fell where the rules count it as lost (core.js lose(), at x, y).
+// Robot rooms run the core in NIGHTLOOM_ROBOT_CORE_DIR when it is set (the pinned core with the
+// S.lab.receiving line); the recording header has its sha256 (core_sha256, robot.lab_core).
 // room -> robot
 //   {type:'welcome', room, k, dt, seat:1}
 //   {type:'episode_start', episode, shift, seed, k, dt}

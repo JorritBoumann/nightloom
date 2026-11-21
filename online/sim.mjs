@@ -188,7 +188,7 @@ globalThis.__nl = (function () {
     }
     return best;
   }
-  // 'u8,0;t10,0' = use cell (8,0), then tip the kettle at (10,0)
+  // 'u8,0;t10,0' = use cell (8,0), then tip the kettle at (10,0); 'l' = lose the held item
   const robotActions = (pr) => String(pr || '').split(';').filter(Boolean).map((a) => {
     const [x, y] = a.slice(1).split(',').map(Number);
     return {verb: a[0], x, y};
@@ -219,6 +219,14 @@ globalThis.__nl = (function () {
       const inp = inputs[i] || {x: S.players[i].x, y: S.players[i].y, pr: '', work: null, receive: false};
       const p = S.players[i];
       for (const a of robotActions(inp.pr)) {
+        if (a.verb === 'l') {
+          // a physical drop that the rules count as lost: lose() of core.js, at the gripper
+          if (!p.held) { ev({name: 'robot_reject', actor: i, verb: 'lose', cell: null}); continue; }
+          const it = p.held; p.held = null; via[i] = 'lose';
+          lose(it, inp.x, inp.y);
+          ev({name: 'robot_action', actor: i, verb: 'lose', cell: null, item: code(it), id: iid(it)});
+          continue;
+        }
         const st = standFor(a.x, a.y, p, inp.x, inp.y);
         if (!st || (a.verb !== 'u' && a.verb !== 't')) { ev({name: 'robot_reject', actor: i, verb: a.verb, cell: {x: a.x, y: a.y}}); continue; }
         p.x = st.sx + .5; p.y = st.sy + .5; p.fx = st.dx; p.fy = st.dy;
@@ -352,6 +360,8 @@ export class SimWorld {
   summary() { return this.api.summary(); }
   info() { return this.api.info(); }
   get S() { return this.api.S; }
+  /** The game's static tables (CH, DREAMS, LEVELS), as an observation rule needs them. */
+  get G() { return (this._G ??= { CH: this.api.CH, DREAMS: this.api.DREAMS, LEVELS: this.api.LEVELS }); }
   get tick() { return this.api.tick; }
   get over() { return this.api.over; }
 }

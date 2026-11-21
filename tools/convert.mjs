@@ -1,6 +1,6 @@
 // Rebuilds online recordings in the headless game and checks them.
 //
-//   node tools/convert.mjs <recording.jsonl.gz | folder> [more ...] [--out <dir>] [--check-only] [--quiet]
+//   node tools/convert.mjs <recording.jsonl.gz | folder> [more ...] [--out <dir>] [--check-only] [--quiet] [--core <dir>]
 //
 // Input: "nightloom-online-v1" recordings (server/src/recording.js). For each
 // episode it starts the game from the recorded seed, feeds the applied inputs of
@@ -22,9 +22,10 @@ const args = process.argv.slice(2);
 const flag = (k) => args.includes(k);
 const optv = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
 const OUT = optv('--out', 'converted');
+const CORE_DIR = optv('--core', '');   // a folder with data.js, core.js, bot.js (for example the robot rooms' pinned core)
 const CHECK_ONLY = flag('--check-only');
 const QUIET = flag('--quiet');
-const inputs = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--out');
+const inputs = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--out' && args[i - 1] !== '--core');
 
 function files(p) {
   const st = fs.statSync(p);
@@ -38,6 +39,8 @@ function readLines(file) {
 }
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const SOURCE = simSource();
+const EXTRA = CORE_DIR ? simSource(new URL(`file://${path.resolve(CORE_DIR)}/`)) : null;
+const sourceFor = (sha) => (EXTRA && EXTRA.sha256 === sha ? EXTRA : SOURCE);
 
 export function convert(lines, { name = '', write = null } = {}) {
   const checks = [];
@@ -46,7 +49,9 @@ export function convert(lines, { name = '', write = null } = {}) {
   check('header', h && h.type === 'header' && h.schema === 'nightloom-online-v1' && h.seats?.length === 2 && Number.isInteger(h.seed) && h.tick_hz === 60,
     h ? `${h.schema} room ${h.room} ep ${h.episode} shift ${h.shift?.id} seed ${h.seed}` : 'no header');
   if (!h || h.type !== 'header') return { checks, ok: false };
-  check('sim_source_matches', h.build?.sim_sha256 === SOURCE.sha256, h.build?.sim_sha256 === SOURCE.sha256 ? '' : `recorded ${h.build?.sim_sha256} local ${SOURCE.sha256}`);
+  const want = h.core_sha256 || h.build?.sim_sha256;
+  const src = sourceFor(want);
+  check('sim_source_matches', want === src.sha256, want === src.sha256 ? (src === SOURCE ? 'src/' : CORE_DIR) : `recorded ${want}, local ${src.sha256} (use --core <dir> for another core)`);
   const byType = (t) => lines.filter((l) => l.type === t);
   const steps = byType('step');
   const summary = lines[lines.length - 1];
@@ -55,13 +60,13 @@ export function convert(lines, { name = '', write = null } = {}) {
   const human = h.seats.map((s) => s.replay === 'inputs');
   const robot = h.seats.map((s) => s.replay === 'robot');
   check('inputs_for_every_seat', steps.every((s) => s.in.every((a, i) => Array.isArray(a) && a.length >= 5
-      && (!human[i] || ['f', 'r', 'i', 'n', 'd'].includes(a[4])) && (!robot[i] || a[4] === 'R'))),
+      && (!human[i] || ['f', 'r', 'i', 'n', 'd', 'S'].includes(a[4])) && (!robot[i] || a[4] === 'R'))),
     h.seats.map((s) => `${s.role}:${s.kind}/${s.replay}`).join(' '));
 
   // replay
-  const w = new SimWorld(SOURCE);
+  const w = new SimWorld(src);
   w.start(h.shift.index, h.seed, h.seats.map((s) => ({ role: s.role, controller: s.replay === 'bot.js' ? 'bot' : s.replay === 'robot' ? 'robot' : 'human', react: s.bot_react ?? undefined })),
-    { dt: h.dt || 1 / 60, labCore: !!h.robot?.lab_core });
+    { dt: h.dt || 1 / 60, labCore: !!h.robot?.lab_core || /S\.lab\b/.test(src.text) });
   const recEvents = byType('event');
   const recHashes = new Map(byType('hash').map((x) => [x.t, x]));
   const recKeys = new Map(byType('keyframe').map((x) => [x.t, x.state]));
@@ -72,7 +77,7 @@ export function convert(lines, { name = '', write = null } = {}) {
   put({
     type: 'header', schema: 'nightloom-trace-v2', game: 'nightloom', version: h.version, shift: info.id, shiftName: info.name, seed: h.seed,
     tickRate: 60, map: info.map, legend: info.legend, dreams: info.dreams,
-    actors: h.seats.map((s) => ({ id: s.actor, kind: s.role, controller: s.controller, driver: s.replay, seat_kind: s.kind, player_id: s.player_id ?? null })),
+    actors: h.seats.map((s) => ({ id: s.actor, kind: s.role, controller: s.controller, driver: s.replay, seat_kind: s.kind, player_id: s.player_id ?? null, bot_react: s.bot_react ?? null, script: s.script ?? null })),
     keyMap: KEYMAP,
     // robot task section 4.1 (session)
     source: 'online', game_commit: h.game_commit ?? null, core_sha256: h.core_sha256 ?? h.build?.sim_sha256, online_build: h.online_build ?? null,
@@ -83,7 +88,7 @@ export function convert(lines, { name = '', write = null } = {}) {
     seats: h.seats.map((s) => ({ seat: s.seat ?? s.actor, role: s.role, controller: s.controller, kind: s.kind, driver: s.replay, player_id: s.player_id ?? null,
       consent: s.consent ?? null, input_device: s.input_device ?? firstDevice(s.actor), client: s.client ?? null, audio_on: s.audio_on ?? 'unknown',
       music_on: s.music_on ?? 'unknown', rounds_before: s.rounds_before ?? null, self_rating: s.self_rating ?? null, comms: s.comms ?? null, hints: s.hints ?? null,
-      bot_react: s.bot_react ?? null })),
+      bot_react: s.bot_react ?? null, script: s.script ?? null })),
     build: h.build, step_order: h.step_order, input_rules: h.input_rules, consent_notice: h.consent_notice ?? h.consent ?? null,
     level: { time: info.time, moons: info.moons, p1: info.p1, p2: info.p2, wind: info.wind, bridge: info.bridge, hints: h.level?.hints ?? null },
     recording: name,
@@ -108,7 +113,7 @@ export function convert(lines, { name = '', write = null } = {}) {
       type: 'tick', tick: S.tick, time: +(S.tick * (h.dt || 1 / 60)).toFixed(4), score: S.score,
       actors: S.players.map((p, i) => ({
         id: i, x: +p.x.toFixed(4), y: +p.y.toFixed(4), fx: +p.fx.toFixed(3), fy: +p.fy.toFixed(3),
-        held: w.api.v1item(p.held), input: { x: +p.in.x.toFixed(3), y: +p.in.y.toFixed(3), act: p.in.act }, working: p.working, valid: true,
+        held: w.api.v1item(p.held), input: { x: p.in.x, y: p.in.y, act: p.in.act }, working: p.working, valid: true,
         held_id: w.api.iid(p.held), presses: r.applied[i][3], input_src: src[i], skipped: s.in[i][5] || 0,
         frame: s.in[i][6] ?? null, client_ms: s.in[i][7] ?? null, recv_ms: s.in[i][8] ?? null,
       })),
@@ -142,7 +147,8 @@ export function convert(lines, { name = '', write = null } = {}) {
   check('summary_matches', summary.type === 'summary' && keys.every((k) => summary[k] === sum[k]), keys.map((k) => `${k} ${summary[k]}/${sum[k]}`).join(', '));
   check('end_state', summary.outcome === 'abandon' ? true : sum.over === true, `${summary.outcome} (${summary.reason}), over=${sum.over}`);
   const net = byType('net');
-  const humanActors = h.seats.filter((s) => s.replay === 'inputs').map((s) => s.actor);
+  // network data for every seat that plays through a client (not the server bot or the robot)
+  const humanActors = h.seats.filter((s) => s.replay === 'inputs' && s.kind !== 'server-bot').map((s) => s.actor);
   check('network_data', steps.length < 120 || humanActors.every((a) => net.some((n) => n.kind === 'input' && n.actor === a)),
     `${net.length} lines: ${[...new Set(net.map((n) => n.kind))].join(', ')}`);
   for (const n of net) put({ type: 'net', ...n });

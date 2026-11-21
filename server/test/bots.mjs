@@ -25,6 +25,7 @@ const SHIFTS = String(opt('--shifts', '0')).split(',').map(Number);
 const DELAY = Number(opt('--delay-ms', 0));
 const SWAP = args.includes('--swap');
 const ROLE = opt('--role', 'bramble');
+const BOT_TYPE = opt('--bot-type', undefined);   // withbot: 'script' (default on a server with the scripts) or 'jorrit'
 const STEP_MS = 1000 / 60;
 
 const root = new URL('../../src/', import.meta.url);
@@ -96,7 +97,7 @@ async function main() {
   const shifts = [...SHIFTS];
   const ca = new Client(URL_);
   const robotOpt = mode === 'robot' ? { k: Number(opt('--k', 2)) } : undefined;
-  const a = await ca.create('night', { name: 'Test bot A', bot: true, controller: 'netcore-autopilot@1', private: true, role: mode === 'robot' ? 'bramble' : ROLE, withBot: mode === 'withbot', robot: robotOpt, shift: shifts[0] });
+  const a = await ca.create('night', { name: 'Test bot A', bot: true, controller: 'netcore-autopilot@1', private: true, role: mode === 'robot' ? 'bramble' : ROLE, withBot: mode === 'withbot', botType: BOT_TYPE, robot: robotOpt, shift: shifts[0] });
   await firstPatch(a);
   console.log(`room ${a.roomId} (${mode}), shifts ${shifts.join(',')}, delay ${DELAY} ms on A`);
   let b = null, robot = null;

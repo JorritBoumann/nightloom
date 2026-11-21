@@ -38,7 +38,9 @@ If you do not have a partner yet, select **Quick match**. The game puts you in a
 2. Type your name.
 3. Select **Play with the bot**.
 
-Note: the bot sometimes waits for ever. It holds wool and waits while the loom holds other wool. If the bot stops, take the wool off the loom.
+The bot plays Bramble or Flit, whichever role you do not take. It sees only what you see on the screen and presses keys as you do.
+
+The room also has the game's original bot. To use it, select **Bot: new bot** in the room. The button then shows **Bot: game bot**. Note: the game bot can wait for ever. It holds wool and waits while the loom holds other wool. If it stops, take the wool off the loom.
 
 ## In the room
 

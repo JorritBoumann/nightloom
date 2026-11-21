@@ -188,4 +188,31 @@ test('a robot seat (Flit) takes a star and fills a kettle at half speed, and the
   assert.ok(Math.abs(last.state.timeLeft - (165 - last.t / 120)) < 1e-6, `game time runs at half speed (timeLeft ${last.state.timeLeft} at step ${last.t})`);
 });
 
+test('robot seat: a throw is caught only in the receive pose (lab core and unchanged core), and lose drops the held item', () => {
+  const src = simSource();
+  // the one LAB line of the robot task's pinned core (ROBOT_TASK.md 1.6), applied in memory
+  const labText = src.text.replace("if(!f.held&&pr.thrower!=='flit'&&Math.hypot", "if(!f.held&&pr.thrower!=='flit'&&(!S.lab||S.lab.receiving)&&Math.hypot");
+  assert.notEqual(labText, src.text);
+  const seats = [{ role: 'bramble', controller: 'human' }, { role: 'flit', controller: 'robot' }];
+  const idle = { x: 0, y: 0, act: false, pr: '' };
+  for (const core of [{ text: labText, sha256: 'lab' }, src]) {
+    for (const receive of [false, true]) {
+      const w = new SimWorld(core); w.start(1, 9, seats, { dt: 1 / 120 });
+      const S = w.S, B = S.players[0];
+      B.x = 6.5; B.y = 3.5; B.fx = 1; B.fy = 0; B.held = { kind: 'wool' };
+      const robot = { x: 8.5, y: 3.5, pr: '', work: null, receive };
+      w.step([{ ...idle, pr: 'a' }, robot]);   // Bramble throws east over the open sky, through the gripper
+      for (let i = 0; i < 150; i++) w.step([idle, robot]);
+      assert.equal(!!S.players[1].held, receive, `${core.sha256 === 'lab' ? 'lab' : 'unchanged'} core, receive ${receive}`);
+    }
+  }
+  const w = new SimWorld(); w.start(1, 9, seats, { dt: 1 / 120 });
+  const S = w.S; S.players[1].held = { kind: 'star' };
+  const lost = S.lost;
+  const r = w.step([idle, { x: 8.5, y: 3.5, pr: 'l', work: null, receive: false }]);
+  assert.equal(S.players[1].held, null);
+  assert.equal(S.lost, lost + 1);
+  assert.ok(r.events.some((e) => e.name === 'robot_action' && e.verb === 'lose'));
+});
+
 console.log(`\n${passed} tests passed`);

@@ -65,14 +65,24 @@ export function convert(lines, { name = '', write = null } = {}) {
   const out = [];
   const put = (o) => out.push(JSON.stringify(o));
   const info = plain(w.info());
+  const firstDevice = (actor) => { const d = lines.find((l) => l.type === 'net' && l.kind === 'device' && l.actor === actor); return d ? d.device : null; };
   put({
     type: 'header', schema: 'nightloom-trace-v2', game: 'nightloom', version: h.version, shift: info.id, shiftName: info.name, seed: h.seed,
     tickRate: 60, map: info.map, legend: info.legend, dreams: info.dreams,
-    actors: h.seats.map((s) => ({ id: s.actor, kind: s.role, controller: s.controller, driver: s.replay, seat_kind: s.kind, player_name: s.player_name, client_id: s.client_id, hints: s.hints })),
+    actors: h.seats.map((s) => ({ id: s.actor, kind: s.role, controller: s.controller, driver: s.replay, seat_kind: s.kind, player_id: s.player_id ?? null })),
     keyMap: KEYMAP,
-    source: 'online', room: h.room, room_created: h.room_created, episode: h.episode, build: h.build, started_at: h.started_at,
-    step_order: h.step_order, input_rules: h.input_rules, consent: h.consent,
-    level: { time: info.time, moons: info.moons, p1: info.p1, p2: info.p2, wind: info.wind, bridge: info.bridge },
+    // robot task section 4.1 (session)
+    source: 'online', game_commit: h.game_commit ?? null, core_sha256: h.core_sha256 ?? h.build?.sim_sha256, online_build: h.online_build ?? null,
+    session_id: h.session_id ?? null, room_id: h.room_id ?? h.room, visit_id: h.visit_id ?? null, round_in_visit: h.round_in_visit ?? h.episode,
+    started_at: h.started_at, tick_rate: 60, countdown_s: h.countdown_s ?? 3, dt: h.dt ?? 1 / 60,
+    hints_shown: h.hints_shown ?? 'unknown', pair_formed_by: h.pair_formed_by ?? null, comms: h.comms ?? 'unknown',
+    // robot task section 4.2 (each seat); names stay out of the play data
+    seats: h.seats.map((s) => ({ seat: s.seat ?? s.actor, role: s.role, controller: s.controller, kind: s.kind, driver: s.replay, player_id: s.player_id ?? null,
+      consent: s.consent ?? null, input_device: s.input_device ?? firstDevice(s.actor), client: s.client ?? null, audio_on: s.audio_on ?? 'unknown',
+      music_on: s.music_on ?? 'unknown', rounds_before: s.rounds_before ?? null, self_rating: s.self_rating ?? null, comms: s.comms ?? null, hints: s.hints ?? null,
+      bot_react: s.bot_react ?? null })),
+    build: h.build, step_order: h.step_order, input_rules: h.input_rules, consent_notice: h.consent_notice ?? h.consent ?? null,
+    level: { time: info.time, moons: info.moons, p1: info.p1, p2: info.p2, wind: info.wind, bridge: info.bridge, hints: h.level?.hints ?? null },
     recording: name,
   });
   let hashBad = 0, hashN = 0, keyBad = 0, keyN = 0, botBad = 0, firstBad = null;
@@ -96,6 +106,7 @@ export function convert(lines, { name = '', write = null } = {}) {
         id: i, x: +p.x.toFixed(4), y: +p.y.toFixed(4), fx: +p.fx.toFixed(3), fy: +p.fy.toFixed(3),
         held: w.api.v1item(p.held), input: { x: +p.in.x.toFixed(3), y: +p.in.y.toFixed(3), act: p.in.act }, working: p.working, valid: true,
         held_id: w.api.iid(p.held), presses: r.applied[i][3], input_src: src[i], skipped: s.in[i][5] || 0,
+        frame: s.in[i][6] ?? null, client_ms: s.in[i][7] ?? null, recv_ms: s.in[i][8] ?? null,
       })),
       pressed: plain(r.pressed), bridgeOn: S.bridgeOn,
       wind: S.L.wind ? S.wind.phase + (S.wind.phase === 'calm' ? '' : (S.wind.dir > 0 ? ':east' : ':west')) : null,
@@ -131,11 +142,12 @@ export function convert(lines, { name = '', write = null } = {}) {
   check('network_data', steps.length < 120 || humanActors.every((a) => net.some((n) => n.kind === 'input' && n.actor === a)),
     `${net.length} lines: ${[...new Set(net.map((n) => n.kind))].join(', ')}`);
   for (const n of net) put({ type: 'net', ...n });
-  put({ type: 'summary', ...sum, outcome: summary.outcome, reason: summary.reason, ended_at: summary.ended_at });
+  put({ type: 'summary', ...sum, outcome: summary.outcome, reason: summary.reason, ended: summary.ended ?? { reason: summary.reason, last_tick: sum.ticks },
+    result: { score: sum.score, delivered: sum.delivered, missed: sum.missed, nightmares: sum.nightmares, lost: sum.lost, bestStreak: sum.bestStreak, moons: sum.moons }, ended_at: summary.ended_at });
   const srcCount = {};
   for (const s of steps) s.in.forEach((a, i) => { const k = `${h.seats[i].role}:${a[4]}`; srcCount[k] = (srcCount[k] || 0) + 1; });
   const ok = checks.every((c) => c.ok);
-  const result = { name, ok, checks, room: h.room, episode: h.episode, shift: h.shift.id, seats: h.seats.map((s) => `${s.role}:${s.kind}:${s.player_name}`),
+  const result = { name, ok, checks, room: h.room, episode: h.episode, shift: h.shift.id, seats: h.seats.map((s) => `${s.role}:${s.kind}:${s.player_id || '-'}`),
     steps: steps.length, events: recEv.length, summary: { score: sum.score, delivered: sum.delivered, missed: sum.missed, nightmares: sum.nightmares, lost: sum.lost, moons: sum.moons, outcome: summary.outcome },
     input_sources: srcCount };
   if (write) write(out.join('\n') + '\n', result);

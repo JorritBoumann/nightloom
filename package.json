@@ -2,7 +2,7 @@
   "name": "nightloom",
   "version": "1.0.0",
   "private": true,
-  "description": "A co-op night shift for two: Bramble and Flit weave dreams to order.",
+  "description": "A co-op night shift for two: Bramble and Flit weave dreams to order. Local, solo with a bot, or online.",
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
@@ -11,7 +11,11 @@
     "test": "node tools/test.mjs",
     "sim": "node tools/sim.mjs",
     "traces": "node tools/traces.mjs",
-    "cover": "\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --headless=new --disable-gpu --hide-scrollbars --window-size=1920,1080 --force-device-scale-factor=1 --virtual-time-budget=6000 --allow-file-access-from-files --screenshot=\"$PWD/assets/cover.png\" \"file://$PWD/tools/cover.html\""
+    "cover": "\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --headless=new --disable-gpu --hide-scrollbars --window-size=1920,1080 --force-device-scale-factor=1 --virtual-time-budget=6000 --allow-file-access-from-files --screenshot=\"$PWD/assets/cover.png\" \"file://$PWD/tools/cover.html\"",
+    "convert": "node tools/convert.mjs"
+  },
+  "dependencies": {
+    "@colyseus/sdk": "0.18.5"
   },
   "engines": {
     "node": ">=18"

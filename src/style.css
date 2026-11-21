@@ -61,3 +61,14 @@ button:focus-visible{outline:3px solid var(--moth);outline-offset:2px}
 kbd{font:600 12px var(--body);background:#0006;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 6px;color:var(--ink)}
 .foot{margin:0;font-size:12px;color:var(--dim)}
 @media (max-width:700px){.legend{grid-template-columns:1fr}}
+/* Online lobby */
+.field{font:600 15px var(--body);background:#0006;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:8px 14px;min-width:0}
+.field:focus-visible{outline:3px solid var(--moth);outline-offset:2px}
+.lbl{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.codein{width:7.5em;text-transform:uppercase;letter-spacing:.2em}
+button.small{font-size:13px;padding:5px 12px}
+.pcode{font-family:var(--display);color:var(--moon);letter-spacing:.08em}
+.roomcode{font-family:var(--display);font-size:52px;line-height:1;letter-spacing:.18em;color:var(--moon)}
+.seats{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.notice{border-left:3px solid var(--moon);padding-left:10px}
+.warn{color:var(--moth);min-height:1em}

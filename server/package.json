@@ -1,0 +1,21 @@
+{
+  "name": "nightloom-server",
+  "private": true,
+  "type": "module",
+  "description": "Colyseus room for Nightloom online co-op. The server runs the unchanged src/data.js, src/core.js and src/bot.js at 60 steps per second.",
+  "license": "UNLICENSED",
+  "engines": { "node": ">= 22.0.0" },
+  "scripts": {
+    "start": "node src/index.js",
+    "bots": "node test/bots.mjs"
+  },
+  "dependencies": {
+    "@colyseus/schema": "5.0.42",
+    "@colyseus/tools": "0.18.10",
+    "aws4fetch": "1.0.20",
+    "colyseus": "0.18.9"
+  },
+  "devDependencies": {
+    "@colyseus/sdk": "0.18.5"
+  }
+}

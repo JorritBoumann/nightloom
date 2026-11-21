@@ -4,3 +4,5 @@ dist-artifact/
 dist-upload/
 traces/
 .DS_Store
+.recordings/
+converted/

@@ -57,11 +57,12 @@ function titleScreen(){
     return`<button type="button" class="chip${UI.start===i?' on':''}" data-i="${i}" ${ok?'':'disabled'} aria-pressed="${UI.start===i}"><b>${i+1}</b> ${L.name}${b?` <small>${'☾'.repeat(b.moons)||'·'} ${b.score}</small>`:''}</button>`}).join('');
   show(`<span class="eyebrow">A co-op night shift for two</span><h1>Nightloom</h1>
     <p>High above the sleeping town, Bramble and Flit weave dreams to order. Fetch stars, spin wool into thread, brew the kettle, bottle the dream and send it down before the sleeper wakes.</p>
-    <div class="btns"><button class="primary" type="button" id="duo">Two players</button><button type="button" id="solo">Solo with a bot partner</button></div>
+    <div class="btns"><button class="primary" type="button" id="duo">Two players</button><button type="button" id="solo">Solo with a bot partner</button>${NET.available()?'<button type="button" id="online">Play online</button>':''}</div>
     <div class="btns" id="who" hidden><span class="flow">Play as</span><button type="button" class="primary" id="asFlit">Flit</button><button type="button" id="asBramble">Bramble</button></div>
     <span class="eyebrow">Start at</span><div class="chips">${chips}</div>`);
   $('duo').onclick=()=>{initAudio();sfx('click');UI.solo=false;UI.run=[];intro(UI.start)};
   $('solo').onclick=()=>{initAudio();sfx('click');$('who').hidden=false;$('duo').classList.remove('primary');$('asFlit').focus()};
+  if($('online'))$('online').onclick=()=>{initAudio();sfx('click');NET.open()};
   $('asFlit').onclick=()=>{UI.solo=true;UI.as='flit';UI.run=[];intro(UI.start)};
   $('asBramble').onclick=()=>{UI.solo=true;UI.as='bramble';UI.run=[];intro(UI.start)};
   for(const b of ov.querySelectorAll('.chip'))b.onclick=()=>{UI.start=+b.dataset.i;for(const o of ov.querySelectorAll('.chip')){o.classList.toggle('on',o===b);o.setAttribute('aria-pressed',o===b)}};
@@ -132,10 +133,11 @@ stage.addEventListener('pointerdown',()=>{if(UI.mode==='play')stage.focus({preve
 let acc=0,last=performance.now();
 function frame(now){
   const dt=Math.min(.1,(now-last)/1000);last=now;
-  tick(dt);
+  if(UI.mode==='net'){try{tick(dt)}catch(e){console.error(e)}}else tick(dt);
   requestAnimationFrame(frame);
 }
 function tick(dt){
+  if(UI.mode==='net'){NET.tick(dt);return}
   pollPads();
   const running=UI.mode==='play'||(UI.mode==='title'&&!EMBEDDED);
   if(running){
@@ -163,8 +165,8 @@ function tick(dt){
 syncToggles();
 if(Q.has('mode')){UI.solo=Q.get('mode')==='solo';if(Q.get('as')==='bramble')UI.as='bramble'}
 if(Q.has('shift')){const v=Q.get('shift'),i=LEVELS.findIndex((L,j)=>L.id===v||String(j+1)===v);if(i>=0)UI.start=i}
-const boot=()=>{if(Q.has('shift'))intro(UI.start);else titleScreen();requestAnimationFrame(t=>{last=t;frame(t)})};
+const boot=()=>{if(Q.has('online')&&NET.available())NET.open();else if(Q.has('shift'))intro(UI.start);else titleScreen();requestAnimationFrame(t=>{last=t;frame(t)})};
 if(document.fonts&&document.fonts.load)Promise.race([Promise.all([document.fonts.load("700 22px Gluten"),document.fonts.load("600 12px Figtree")]),new Promise(r=>setTimeout(r,1500))]).then(boot,boot);else boot();
 
-/* Test handle, only with ?debug=1 in the URL. */
-if(Q.has('debug'))window.__nightloom={state:()=>S,ui:UI,finishShift:score=>{S.score=score;S.timeLeft=.02},run:sec=>{for(let i=0;i<sec*20;i++)tick(.05)}};
+/* Test handle, only with ?debug=1 in the URL (or window.NIGHTLOOM_TEST set by a test page before load). */
+if(Q.has('debug')||window.NIGHTLOOM_TEST===true)window.__nightloom={state:()=>S,ui:UI,net:NET,hint:hintFor,finishShift:score=>{S.score=score;S.timeLeft=.02},run:sec=>{for(let i=0;i<sec*20;i++)tick(.05)}};

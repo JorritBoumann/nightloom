@@ -53,12 +53,15 @@ export function convert(lines, { name = '', write = null } = {}) {
   check('summary_present', summary.type === 'summary', summary.type);
   check('steps_contiguous', steps.every((s, i) => s.t === i + 1 && Array.isArray(s.in) && s.in.length === 2), `${steps.length} steps`);
   const human = h.seats.map((s) => s.replay === 'inputs');
-  check('inputs_for_every_seat', steps.every((s) => s.in.every((a, i) => Array.isArray(a) && a.length >= 5 && (!human[i] || ['f', 'r', 'i', 'n', 'd'].includes(a[4])))),
+  const robot = h.seats.map((s) => s.replay === 'robot');
+  check('inputs_for_every_seat', steps.every((s) => s.in.every((a, i) => Array.isArray(a) && a.length >= 5
+      && (!human[i] || ['f', 'r', 'i', 'n', 'd'].includes(a[4])) && (!robot[i] || a[4] === 'R'))),
     h.seats.map((s) => `${s.role}:${s.kind}/${s.replay}`).join(' '));
 
   // replay
   const w = new SimWorld(SOURCE);
-  w.start(h.shift.index, h.seed, h.seats.map((s) => ({ role: s.role, controller: s.replay === 'bot.js' ? 'bot' : 'human', react: s.bot_react ?? undefined })));
+  w.start(h.shift.index, h.seed, h.seats.map((s) => ({ role: s.role, controller: s.replay === 'bot.js' ? 'bot' : s.replay === 'robot' ? 'robot' : 'human', react: s.bot_react ?? undefined })),
+    { dt: h.dt || 1 / 60, labCore: !!h.robot?.lab_core });
   const recEvents = byType('event');
   const recHashes = new Map(byType('hash').map((x) => [x.t, x]));
   const recKeys = new Map(byType('keyframe').map((x) => [x.t, x.state]));
@@ -74,7 +77,7 @@ export function convert(lines, { name = '', write = null } = {}) {
     // robot task section 4.1 (session)
     source: 'online', game_commit: h.game_commit ?? null, core_sha256: h.core_sha256 ?? h.build?.sim_sha256, online_build: h.online_build ?? null,
     session_id: h.session_id ?? null, room_id: h.room_id ?? h.room, visit_id: h.visit_id ?? null, round_in_visit: h.round_in_visit ?? h.episode,
-    started_at: h.started_at, tick_rate: 60, countdown_s: h.countdown_s ?? 3, dt: h.dt ?? 1 / 60,
+    started_at: h.started_at, tick_rate: 60, countdown_s: h.countdown_s ?? 3, dt: h.dt ?? 1 / 60, robot: h.robot ?? null,
     hints_shown: h.hints_shown ?? 'unknown', pair_formed_by: h.pair_formed_by ?? null, comms: h.comms ?? 'unknown',
     // robot task section 4.2 (each seat); names stay out of the play data
     seats: h.seats.map((s) => ({ seat: s.seat ?? s.actor, role: s.role, controller: s.controller, kind: s.kind, driver: s.replay, player_id: s.player_id ?? null,
@@ -92,7 +95,8 @@ export function convert(lines, { name = '', write = null } = {}) {
   const h0 = recHashes.get(0);
   if (h0) { hashN++; const g = w.hashes(); if (g.fnv1a !== h0.fnv1a || g.full !== h0.full) { hashBad++; firstBad ??= 'hash t=0'; } }
   for (const s of steps) {
-    const inp = s.in.map((a, i) => human[i] ? { x: a[0], y: a[1], act: !!a[2], pr: a[3] } : null);
+    const inp = s.in.map((a, i) => human[i] ? { x: a[0], y: a[1], act: !!a[2], pr: a[3] }
+      : robot[i] ? { x: a[0], y: a[1], pr: a[3], work: a[9] || null, receive: !!a[10] } : null);
     const r = w.step(inp);
     for (let i = 0; i < 2; i++) {
       if (!same(r.applied[i], s.in[i].slice(0, 4))) { botBad++; firstBad ??= `input actor ${i} t=${s.t}`; }
@@ -101,7 +105,7 @@ export function convert(lines, { name = '', write = null } = {}) {
     const S = w.S;
     const src = s.in.map((a) => a[4]);
     put({
-      type: 'tick', tick: S.tick, time: +(S.tick / 60).toFixed(4), score: S.score,
+      type: 'tick', tick: S.tick, time: +(S.tick * (h.dt || 1 / 60)).toFixed(4), score: S.score,
       actors: S.players.map((p, i) => ({
         id: i, x: +p.x.toFixed(4), y: +p.y.toFixed(4), fx: +p.fx.toFixed(3), fy: +p.fy.toFixed(3),
         held: w.api.v1item(p.held), input: { x: +p.in.x.toFixed(3), y: +p.in.y.toFixed(3), act: p.in.act }, working: p.working, valid: true,

@@ -16,7 +16,7 @@ function itemFromCode(c){
 /* The local player's movement. The same lines as the start of update() in
    core.js, for one player and one step. Prediction only. */
 function predictMove(p,inp){
-  const dt=NETC.STEP;
+  const dt=(S&&S.netDt)||NETC.STEP; // game seconds per step: 1/60, or 1/(60 k) in a robot room
   p.dashT=Math.max(0,p.dashT-dt);p.dashCd=Math.max(0,p.dashCd-dt);
   let ix=inp.x,iy=inp.y;const m=Math.hypot(ix,iy);
   if(m>1){ix/=m;iy/=m}
@@ -67,6 +67,7 @@ function makeNetCore(){
     S.streak=st.streak;S.bestStreak=st.bestStreak;S.timeLeft=st.timeLeft;
     S.bridgeOn=st.bridgeOn;S.bridgeT=st.bridgeT;S.wind.phase=st.windPhase;S.wind.dir=st.windDir;S.wind.t=st.windT;
     S.over=st.phase==='ended';
+    S.netDt=st.dt||NETC.STEP;
     S.countdown=st.phase==='countdown'?st.countdown:0;
     const seen=new Set(),projs=new Map();
     st.objects.forEach((o,key)=>{

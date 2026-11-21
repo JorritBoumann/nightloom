@@ -10,6 +10,7 @@ import { Room } from 'colyseus';
 import { NightState, Player, Obj, Order, Applied, InputCmd } from './schema.js';
 import { SimWorld, simSource, TICK_HZ, HASH_EVERY, KEYFRAME_EVERY, ROLES, plain } from '../../online/sim.mjs';
 import { EpisodeRecorder, flushUploads, getJson, putJson, PLAYERS_PREFIX } from './recording.js';
+import { registerRobotRoom, unregisterRobotRoom, robotLinkEnabled } from './robotLink.js';
 
 const SOURCE = simSource(new URL('../../src/', import.meta.url));
 const MANIFEST = JSON.parse(fs.readFileSync(new URL('../../stateloop.coop.json', import.meta.url), 'utf8'));
@@ -31,6 +32,8 @@ const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const PLAYER_ID = /^[0-9A-HJKMNP-TV-Z]{8}$/;   // Crockford base32, made by the client
 const COLORS = ['#9bd47a', '#ffb3c7'];
 const BOT_KEY = 'bot';
+const ROBOT_KEY = 'robot';
+const OBS_EVERY = 3;          // robot rooms: an observation every 3 steps (20 per second)
 const INTENTS = new Set(['', 'wool', 'star', 'moondrop', 'thread', 'jar', 'dirty']);
 const COMMS = new Set(['none', 'voice', 'same_room', 'text']);
 const FOCUS = new Set(['blur', 'focus', 'hidden', 'visible']);
@@ -84,8 +87,24 @@ export class NightRoom extends Room {
     this.shiftFixed = options.shift !== undefined && options.shift !== null;
     this.setShift(this.shiftFixed ? options.shift : SHIFT.midnight);
     this.state.suggest = this.state.shift;
-    this.wantBot = !!options.withBot;
+    this.wantBot = !!options.withBot && !options.robot;
     this.state.withBot = this.wantBot;
+    this.robot = null;
+    if (options.robot) {
+      // Robot room (live test): an outside process drives the Flit seat over the robot link.
+      if (!robotLinkEnabled()) throw new Error('robot_rooms_disabled');
+      const k = Math.max(1, Math.min(4, Number(options.robot.k) || 2));
+      this.robot = { k, dt: 1 / (60 * k), ws: null, policy: '', version: '', pose: null, queue: [], lastSeq: 0, lastRecv: null, events: [] };
+      this.state.dt = this.robot.dt;
+      this.formedBy = 'robot';
+      if (!this.isPrivate) { this.isPrivate = true; await this.setPrivate(true); }
+      const p = new Player();
+      this.setSlot(p, 1);
+      p.bot = true; p.kind = 'robot'; p.name = 'Robot'; p.ready = false; p.connected = false; p.comms = 'none';
+      p.act = new Applied();
+      this.state.players.set(ROBOT_KEY, p);
+      registerRobotRoom(this.roomId, this);
+    }
     this.seats = new Map();    // sessionId -> seat bookkeeping (inputs, client facts, history)
     this.world = null;
     this.rec = null;
@@ -144,7 +163,61 @@ export class NightRoom extends Room {
     return -1;
   }
   setSlot(p, slot) { p.slot = slot; p.role = ROLES[slot]; p.color = COLORS[slot]; }
-  humans() { return [...this.state.players.entries()].filter(([, p]) => p.kind !== 'server-bot'); }
+  humans() { return [...this.state.players.entries()].filter(([, p]) => p.kind === 'human' || p.kind === 'test-bot'); }
+
+  // ---- robot seat ------------------------------------------------------------
+  /** A robot process connected over the robot link (robotLink.js). */
+  attachRobot(ws) {
+    const r = this.robot;
+    if (!r) return false;
+    if (r.ws) { try { r.ws.close(4002, 'replaced by a new robot connection'); } catch { /* gone */ } }
+    r.ws = ws;
+    const rp = this.state.players.get(ROBOT_KEY);
+    if (rp) rp.connected = true;
+    this.netLog('robot_connect', ROBOT_KEY);
+    ws.on('message', (data) => {
+      let m;
+      try { m = JSON.parse(String(data)); } catch { return; }
+      if (m.type === 'hello') {
+        r.policy = cleanStr(m.policy, 80); r.version = cleanStr(m.version, 80);
+        if (rp) { rp.ready = true; rp.name = 'Robot'; }
+        const all = [...this.state.players.values()];
+        if (this.inLobby() && all.length === 2 && all.every((q) => q.ready)) this.startCountdown();
+      } else if (m.type === 'act') {
+        const num2 = (v) => (Array.isArray(v) && v.length === 2 && v.every(Number.isInteger) ? [v[0], v[1]] : null);
+        const acts = (Array.isArray(m.actions) ? m.actions : []).slice(0, 8)
+          .map((a) => ({ v: a?.verb === 'use' ? 'u' : a?.verb === 'tip' ? 't' : '', c: num2(a?.cell) })).filter((a) => a.v && a.c);
+        r.queue.push({ seq: Number(m.seq) || 0, x: num(m.x, -2, 40), y: num(m.y, -2, 40), work: num2(m.work), receive: m.receive === true,
+          pr: acts.map((a) => `${a.v}${a.c[0]},${a.c[1]}`).join(';'), at: Date.now() });
+        if (r.queue.length > 240) r.queue.shift();
+      }
+    });
+    ws.on('close', () => {
+      if (r.ws !== ws) return;
+      r.ws = null;
+      if (rp) { rp.connected = false; if (this.inLobby()) rp.ready = false; }
+      this.netLog('robot_disconnect', ROBOT_KEY);
+    });
+    this.robotSend({ type: 'welcome', room: this.roomId, k: r.k, dt: r.dt, seat: 1 });
+    return true;
+  }
+  robotSend(m) { const ws = this.robot?.ws; if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
+  /** The robot input for one step: every message since the last step, in order. */
+  takeRobot(t) {
+    const r = this.robot, S = this.world.S;
+    if (!r.pose) r.pose = { x: S.players[1].x, y: S.players[1].y, work: null, receive: false };
+    let pr = '';
+    for (const m of r.queue) {
+      if (m.x !== null && m.y !== null) { r.pose.x = m.x; r.pose.y = m.y; }
+      r.pose.work = m.work; r.pose.receive = m.receive;
+      if (m.pr) pr = pr ? `${pr};${m.pr}` : m.pr;
+      r.lastSeq = m.seq; r.lastRecv = m.at;
+    }
+    const fresh = r.queue.length > 0;
+    r.queue = [];
+    return { inp: { x: r.pose.x, y: r.pose.y, pr, work: r.pose.work, receive: r.pose.receive }, src: 'R', skipped: 0,
+      frame: fresh ? { k: r.lastSeq, ct: null, rx: r.lastRecv - this.episodeStartWall } : null };
+  }
 
   async onJoin(client, options = {}) {
     const slot = this.freeSlot(ROLES.indexOf(options.role));
@@ -248,6 +321,7 @@ export class NightRoom extends Room {
     if (this.state.phase === 'playing') this.finishEpisode(s?.dropped ? 'disconnect' : 'left');
     if (this.state.phase === 'countdown') this.backToLobby();
     if (this.humans().length === 0) this.removeBot();
+    if (this.robot && this.humans().length === 0) this.disconnect();
     for (const [, q] of this.humans()) q.ready = false;
     this.updateLock();
     this.suggestShift();
@@ -255,6 +329,7 @@ export class NightRoom extends Room {
 
   async onDispose() {
     if (this.state.phase === 'playing') this.finishEpisode('left');
+    if (this.robot) { unregisterRobotRoom(this.roomId); try { this.robot.ws?.close(4003, 'room closed'); } catch { /* gone */ } }
     await flushUploads();
     await this.presence.srem('nightloom:codes', this.roomId);
   }
@@ -379,11 +454,12 @@ export class NightRoom extends Room {
   startCountdown() {
     const seats = [0, 1].map((slot) => {
       const [key, p] = this.playerAt(slot);
-      return { slot, key, role: ROLES[slot], kind: p.kind, sim: p.kind === 'server-bot' ? 'bot' : 'human' };
+      return { slot, key, role: ROLES[slot], kind: p.kind, sim: p.kind === 'server-bot' ? 'bot' : p.kind === 'robot' ? 'robot' : 'human' };
     });
     const seed = crypto.randomInt(0, 2 ** 32 - 1) >>> 0;
     this.world = new SimWorld(SOURCE);
-    this.world.start(this.state.shift, seed, seats.map((s) => ({ role: s.role, controller: s.sim })));
+    this.world.start(this.state.shift, seed, seats.map((s) => ({ role: s.role, controller: s.sim })), { dt: this.robot ? this.robot.dt : 1 / TICK_HZ });
+    if (this.robot) { this.robot.pose = null; this.robot.queue = []; }
     this.episodeSeats = seats;
     this.state.seed = seed;
     this.state.outcome = '';
@@ -409,6 +485,11 @@ export class NightRoom extends Room {
     const seats = this.episodeSeats.map((e) => {
       const s = this.seats.get(e.key);
       const p = this.state.players.get(e.key);
+      if (e.kind === 'robot') {
+        const r = this.robot;
+        return { seat: e.slot, actor: e.slot, role: e.role, controller: `robot:${r.policy || 'unknown'}`, kind: 'robot', replay: 'robot',
+          robot_version: r.version || null, player_id: null, client_id: null, consent: null, input_device: null, client: null, audio_on: null, rounds_before: null, self_rating: null, comms: null, hints: null };
+      }
       if (e.kind === 'server-bot') {
         return { seat: e.slot, actor: e.slot, role: e.role, controller: BOT_CONTROLLER, kind: e.kind, replay: 'bot.js', bot_react: 0.22,
           player_id: null, client_id: null, consent: null, input_device: null, client: null, audio_on: null, rounds_before: null, self_rating: null, comms: null, hints: null };
@@ -439,7 +520,8 @@ export class NightRoom extends Room {
       visit_id: this.visitId, round_in_visit: this.state.episode, episode: this.state.episode, pair_formed_by: formed, room_private: this.isPrivate,
       comms, hints_shown: hintsShown,
       seed: w.S.seed, shift: { index: info.shift, id: info.id, name: info.name },
-      tick_rate: TICK_HZ, tick_hz: TICK_HZ, dt: 1 / TICK_HZ, countdown_s: COUNTDOWN_S,
+      tick_rate: TICK_HZ, tick_hz: TICK_HZ, dt: this.robot ? this.robot.dt : 1 / TICK_HZ, countdown_s: COUNTDOWN_S,
+      robot: this.robot ? { k: this.robot.k, policy: this.robot.policy, version: this.robot.version, lab_core: false, obs_every: OBS_EVERY, link: 'server/src/robotLink.js' } : null,
       hash_every: HASH_EVERY, keyframe_every: KEYFRAME_EVERY,
       step_order: STEP_ORDER, row_format: ROW,
       input_rules: { max_backlog_frames: MAX_BACKLOG, repeat_ticks: HOLD_TICKS, grip_ticks: GRIP_TICKS, max_presses: MAX_PRESSES, reconnect_s: RECONNECT_S },
@@ -451,6 +533,8 @@ export class NightRoom extends Room {
     });
     this.rec.keyframe(0, w.full());
     this.rec.hash(0, w.hashes());
+    this.robotSend({ type: 'episode_start', episode: this.state.episode, shift: this.state.shift, seed: w.S.seed, k: this.robot?.k, dt: this.robot?.dt });
+    if (this.robot) this.robotObs(0, []);
     this.broadcast('evt:episode_start', {
       episode: this.state.episode, levelId: this.state.levelId, shift: this.state.shift, seed: w.S.seed,
       seats: seats.map((s) => ({ seat: s.client_id || BOT_KEY, actor: s.actor, role: s.role, kind: s.kind })),
@@ -497,6 +581,7 @@ export class NightRoom extends Room {
     }
     this.shiftFixed = false;
     this.suggestShift();
+    this.robotSend({ type: 'episode_end', episode: this.state.episode, outcome, reason: ended, summary: sum });
     this.broadcast('evt:episode_end', { episode: this.state.episode, outcome, reason: ended, ...sum });
   }
 
@@ -530,6 +615,7 @@ export class NightRoom extends Room {
       const [key, p] = this.playerAt(slot);
       if (!p) { inputs[slot] = { x: 0, y: 0, act: false, pr: '' }; meta[slot] = { src: 'd', skipped: 0, frame: null }; continue; }
       if (p.kind === 'server-bot') continue;
+      if (p.kind === 'robot') { const r = this.takeRobot(t); inputs[slot] = r.inp; meta[slot] = r; continue; }
       const r = this.takeInput(key, p, t);
       inputs[slot] = r.inp;
       meta[slot] = r;
@@ -540,7 +626,9 @@ export class NightRoom extends Room {
       const m = meta[i];
       if (!m) return [a[0], a[1], a[2], a[3], 'b'];
       const f = m.frame;
-      return [a[0], a[1], a[2], a[3], m.src, m.skipped, f ? f.k : null, f ? f.ct : null, f ? f.rx : null];
+      const row = [a[0], a[1], a[2], a[3], m.src, m.skipped, f ? f.k : null, f ? f.ct : null, f ? f.rx : null];
+      if (m.src === 'R') row.push(m.inp.work || null, !!m.inp.receive);
+      return row;
     });
     rec.step(t, rows);
     for (const e of out.events) rec.event(t, e);
@@ -554,6 +642,10 @@ export class NightRoom extends Room {
       }
     }
     if (t % KEYFRAME_EVERY === 0) rec.keyframe(t, w.full());
+    if (this.robot) {
+      this.robot.events.push(...out.events.filter((e) => e.name !== 'decision').map((e) => ({ t, ...e })));
+      if (t % OBS_EVERY === 0) { this.robotObs(t, this.robot.events); this.robot.events = []; }
+    }
     if (t % PING_TICKS === 0) this.sendPings();
     this.sync(out.applied, meta);
     if (out.fx.length) this.broadcast('fx', out.fx);
@@ -563,6 +655,12 @@ export class NightRoom extends Room {
       this.broadcast(`evt:${e.name}`, seat !== undefined ? { seat, ...e } : e);
     }
     if (out.over) this.finishEpisode('shift_over');
+  }
+
+  robotObs(t, events) {
+    const r = this.robot;
+    if (!r?.ws) return;
+    this.robotSend({ type: 'obs', tick: t, game_time: t * r.dt, applied_seq: r.lastSeq, state: plain(this.world.full()), events: plain(events) });
   }
 
   keyForSlot(slot) { const [key] = this.playerAt(slot); return key; }
@@ -690,7 +788,8 @@ export class NightRoom extends Room {
         const a = applied[pl.slot], m = meta && meta[pl.slot];
         pl.act.x = a[0]; pl.act.y = a[1]; pl.act.act = !!a[2]; pl.act.pr = a[3]; pl.act.src = m ? m.src : 'b';
       }
-      if (pl.kind !== 'server-bot') { const acc = this.inputs.get(key); if (acc) pl.ack = acc.consumedCount; }
+      if (pl.kind === 'robot') { pl.ack = this.robot ? this.robot.lastSeq : 0; }
+      else if (pl.kind !== 'server-bot') { const acc = this.inputs.get(key); if (acc) pl.ack = acc.consumedCount; }
       else { const f = (p.bot && p.bot.task && p.bot.task.fetch) || ''; if (pl.intent !== f) pl.intent = f; }
     }
 

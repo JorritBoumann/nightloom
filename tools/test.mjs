@@ -104,20 +104,23 @@ test('two bots earn at least one moon on every shift', () => {
 });
 
 // ---- online play: a recorded round must replay exactly from the seed and the inputs ----
-function recordRound(shift, seed, seats, steps, inputAt) {
+function recordRound(shift, seed, seats, steps, inputAt, opts = {}) {
   const w = new SimWorld();
-  w.start(shift, seed, seats);
+  w.start(shift, seed, seats, opts);
   const info = JSON.parse(JSON.stringify(w.info()));
   const L = [{ type: 'header', schema: 'nightloom-online-v1', game: 'nightloom', version: 'test', room: 'TEST', episode: 1, seed,
-    shift: { index: shift, id: info.id, name: info.name }, tick_hz: 60, core_sha256: simSource().sha256, build: { sim_sha256: simSource().sha256 },
-    seats: seats.map((s, i) => ({ seat: i, actor: i, role: s.role, kind: s.controller === 'bot' ? 'server-bot' : 'human', controller: s.controller === 'bot' ? 'bot:test' : 'human',
-      replay: s.controller === 'bot' ? 'bot.js' : 'inputs', player_id: s.controller === 'bot' ? null : 'TEST0000' })) }];
+    shift: { index: shift, id: info.id, name: info.name }, tick_hz: 60, dt: opts.dt || 1 / 60, core_sha256: simSource().sha256, build: { sim_sha256: simSource().sha256 },
+    seats: seats.map((s, i) => ({ seat: i, actor: i, role: s.role, kind: s.controller === 'bot' ? 'server-bot' : s.controller === 'robot' ? 'robot' : 'human',
+      controller: s.controller === 'bot' ? 'bot:test' : s.controller === 'robot' ? 'robot:test' : 'human',
+      replay: s.controller === 'bot' ? 'bot.js' : s.controller === 'robot' ? 'robot' : 'inputs', player_id: s.controller === 'human' ? 'TEST0000' : null })) }];
   const J = (o) => JSON.parse(JSON.stringify(o));
   L.push({ type: 'keyframe', t: 0, state: J(w.full()) }, { type: 'hash', t: 0, ...w.hashes() });
   for (let t = 1; t <= steps && !w.over; t++) {
-    const inputs = seats.map((s, i) => s.controller === 'bot' ? null : inputAt(t, i));
+    const inputs = seats.map((s, i) => s.controller === 'bot' ? null : inputAt(t, i, w));
     const r = w.step(inputs);
-    L.push({ type: 'step', t, in: r.applied.map((a, i) => [...J(a), seats[i].controller === 'bot' ? 'b' : 'f']) });
+    L.push({ type: 'step', t, in: r.applied.map((a, i) => seats[i].controller === 'robot'
+      ? [...J(a), 'R', 0, null, null, null, inputs[i].work || null, !!inputs[i].receive]
+      : [...J(a), seats[i].controller === 'bot' ? 'b' : 'f']) });
     for (const e of r.events) L.push({ type: 'event', t, ...J(e) });
     if (t % HASH_EVERY === 0) L.push({ type: 'hash', t, ...w.hashes() });
     if (t % KEYFRAME_EVERY === 0) L.push({ type: 'keyframe', t, state: J(w.full()) });
@@ -164,6 +167,25 @@ test('one changed input is caught by the replay check', () => {
   const r = convert(L);
   assert.ok(!r.ok, 'a tampered recording must fail');
   assert.ok(r.checks.some((c) => !c.ok && (c.id === 'every_hash_matches' || c.id === 'events_replay')));
+});
+
+test('a robot seat (Flit) takes a star and fills a kettle at half speed, and the round replays exactly', () => {
+  // Midnight: star shelf (10,0), kettle (5,3). The gripper moves in straight lines; uses happen at cells.
+  const k = keys(21);
+  const plan = { 30: 'u10,0', 240: 'u5,3', 420: 'u10,0', 600: 'u5,4' };
+  let gx = 11.5, gy = 1.5;
+  const L = recordRound(1, 777, [{ role: 'bramble', controller: 'human' }, { role: 'flit', controller: 'robot' }], 1200, (t, i) => {
+    if (i === 0) return k(t);
+    gx += (t < 240 ? -0.02 : 0); gy += (t > 400 && t < 500 ? 0.01 : 0);
+    return { x: gx, y: gy, pr: plan[t] || '', work: null, receive: t > 900 };
+  }, { dt: 1 / 120 });
+  const r = convert(L);
+  for (const c of r.checks) assert.ok(c.ok, `${c.id}: ${c.detail}`);
+  const ev = L.filter((l) => l.type === 'event');
+  assert.equal(ev.filter((e) => e.name === 'robot_action').length, 4);
+  assert.ok(ev.some((e) => e.name === 'kettle' && e.items.includes('star')), 'the robot put a star into a kettle');
+  const last = L.filter((l) => l.type === 'keyframe').pop();
+  assert.ok(Math.abs(last.state.timeLeft - (165 - last.t / 120)) < 1e-6, `game time runs at half speed (timeLeft ${last.state.timeLeft} at step ${last.t})`);
 });
 
 console.log(`\n${passed} tests passed`);

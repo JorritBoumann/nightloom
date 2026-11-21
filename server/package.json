@@ -13,6 +13,7 @@
     "@colyseus/schema": "5.0.42",
     "@colyseus/tools": "0.18.10",
     "aws4fetch": "1.0.20",
+    "ws": "8.23.0",
     "colyseus": "0.18.9"
   },
   "devDependencies": {

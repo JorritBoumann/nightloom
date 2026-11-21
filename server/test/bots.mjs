@@ -10,9 +10,12 @@
 // withbot: one test bot and the server-side bot seat.
 // --delay-ms adds that much round trip to the FIRST bot (half on sends, half on receives).
 // --swap swaps the roles before every shift after the first.
+//   URL=ws://localhost:2567 ROBOT_PORT=2601 ROBOT_KEY=... node test/bots.mjs robot [--shifts 1] [--k 2]
+// robot:   one test bot (Bramble) in a robot room; test/robot-client.mjs drives the Flit seat over the robot link.
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { Client } from '@colyseus/sdk';
+import { runTestRobot } from './robot-client.mjs';
 
 const URL_ = process.env.URL || 'ws://localhost:2567';
 const args = process.argv.slice(2);
@@ -92,10 +95,12 @@ function runBot(name, room, { delayMs = 0, onEnded }) {
 async function main() {
   const shifts = [...SHIFTS];
   const ca = new Client(URL_);
-  const a = await ca.create('night', { name: 'Test bot A', bot: true, controller: 'netcore-autopilot@1', private: true, role: ROLE, withBot: mode === 'withbot', shift: shifts[0] });
+  const robotOpt = mode === 'robot' ? { k: Number(opt('--k', 2)) } : undefined;
+  const a = await ca.create('night', { name: 'Test bot A', bot: true, controller: 'netcore-autopilot@1', private: true, role: mode === 'robot' ? 'bramble' : ROLE, withBot: mode === 'withbot', robot: robotOpt, shift: shifts[0] });
   await firstPatch(a);
   console.log(`room ${a.roomId} (${mode}), shifts ${shifts.join(',')}, delay ${DELAY} ms on A`);
-  let b = null;
+  let b = null, robot = null;
+  if (mode === 'robot') robot = runTestRobot({ port: Number(process.env.ROBOT_PORT), key: process.env.ROBOT_KEY, room: a.roomId, log: console.log });
   if (mode === 'pair') {
     const cb = new Client(URL_);
     b = await cb.joinById(a.roomId, { name: 'Test bot B', bot: true, controller: 'netcore-autopilot@1' });
@@ -129,6 +134,7 @@ async function main() {
   await finished;
   clearInterval(t);
   for (const x of bots) { x.stop(); console.log(`bot ${x.name}: sent ${x.stats.sent} frames, ${x.stats.presses} presses`); }
+  if (robot) { console.log(`robot: ${robot.stats.obs} observations, ${robot.stats.acts} messages, ${robot.stats.actions} uses`); robot.close(); }
   await a.leave(true).catch(() => {});
   if (b) await b.leave(true).catch(() => {});
   setTimeout(() => process.exit(0), 300);

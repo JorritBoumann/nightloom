@@ -36,7 +36,7 @@ export const Applied = schema({
 export const Player = schema({
   slot: t.uint8().default(0),           // actor index in the simulation: 0 Bramble, 1 Flit
   role: t.string().default('bramble'),
-  kind: t.string().default('human'),    // human, test-bot (a client that joined with {bot:true}) or server-bot
+  kind: t.string().default('human'),    // human, test-bot (a client that joined with {bot:true}), server-bot or robot (robot link)
   bot: t.boolean().default(false),      // true for test bots and the server bot
   name: t.string().default(''),
   color: t.string().default('#9bd47a'),
@@ -108,6 +108,7 @@ export const NightState = schema({
   withBot: t.boolean().default(false),
   suggest: t.uint8().default(0),        // the shift the lobby suggests next (Dusk warm-up, then Midnight, then Daybreak)
   rounds: t.uint16().default(0),        // finished rounds in this room; roles swap after every second one
+  dt: t.number().default(1 / 60),       // game seconds per step: 1/60, or 1/(60 k) in a robot room
   swapped: t.boolean().default(false),  // the roles were swapped after the last round
   players: t.map(Player),
   objects: t.map(Obj),

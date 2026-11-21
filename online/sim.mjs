@@ -14,6 +14,15 @@
 //
 // This is the order of the offline game loop in src/ui.js: key presses run
 // between steps, then applyHumanInput(), then the bots, then update().
+//
+// Robot seat (robot task section 1.6, for the live test): a seat with
+// controller 'robot' is driven by an outside process. Flit's player is a proxy:
+// it stands at the gripper position; a use or tip puts it on a walkable
+// neighbor of the target cell, turns it to the cell and calls grab() or
+// actDown(), then puts it back; a wash holds the work key at the basin during
+// update(); a catch happens only while the robot receives (S.lab.receiving in a
+// core with that LAB line, or else by blocking the catch for one update).
+// The clock step is a start option: dt = 1/(60 k).
 // The game rules are not touched. The driver only reads the state and listens
 // on the HOOK callbacks that core.js already calls.
 import fs from 'node:fs';
@@ -43,7 +52,8 @@ export function fnv1a(s) {
 // their top-level bindings (S, HOOK, grab, actDown, update, makeBot, ...).
 const DRIVER = String.raw`
 globalThis.__nl = (function () {
-  const DT = 1 / 60;
+  let DT = 1 / 60;
+  const RECV_BLOCK = {kind: 'lab:not-receiving'};   // fills Flit's hands for one update(): no catch
   let events = [], fx = [], pressed = [], phase = 'idle', curActor = -1;
   let randN = 0;
   let ids = new WeakMap(), nextId = 0;
@@ -141,8 +151,10 @@ globalThis.__nl = (function () {
     for (let i = 0; i < S.players.length; i++) if (S.players[i].sayT === 2.4) ev({name: 'say', actor: i, text: S.players[i].say});
   }
 
-  let seats = null;
-  function start(shift, seed, seatList) {
+  let seats = null, labCore = false, robotPos = [null, null];
+  function start(shift, seed, seatList, opts) {
+    DT = opts && opts.dt ? opts.dt : 1 / 60;
+    labCore = !!(opts && opts.labCore);
     newGame(shift, {seed, countdown: 0});
     // count the random draws, so a keyframe can say where the generator stands
     const r = S.rand; randN = 0; S.rand = () => { randN++; return r(); };
@@ -152,7 +164,7 @@ globalThis.__nl = (function () {
       const p = S.players[i], s = seats[i];
       p.tag = ''; p.hint = '';
       if (s.controller === 'bot') makeBot(p, s.react !== undefined ? {react: s.react} : {});
-      else p.actName = 'Shift'; // the say texts name the key as in solo mode; no rule changes
+      else if (s.controller !== 'robot') p.actName = 'Shift'; // the say texts name the key as in solo mode; no rule changes
     }
     events = []; fx = [];
     return info();
@@ -164,7 +176,26 @@ globalThis.__nl = (function () {
       p1: S.L.p1, p2: S.L.p2, wind: S.L.wind || null, bridge: S.L.bridge || null};
   }
 
-  // inputs[i]: {x, y, act, pr} for a human seat, null for a bot seat
+  // Robot seat: the walkable neighbor of a cell where the proxy stands to use it
+  // (nearest to the gripper; ties in the order of bot.js DIRS4), and its facing.
+  function standFor(cx, cy, p, gx, gy) {
+    let best = null;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const sx = cx - dx, sy = cy - dy;
+      if (!walkable(tileAt(sx, sy), p.kind)) continue;
+      const d = Math.hypot(sx + .5 - gx, sy + .5 - gy);
+      if (!best || d < best.d) best = {sx, sy, dx, dy, d};
+    }
+    return best;
+  }
+  // 'u8,0;t10,0' = use cell (8,0), then tip the kettle at (10,0)
+  const robotActions = (pr) => String(pr || '').split(';').filter(Boolean).map((a) => {
+    const [x, y] = a.slice(1).split(',').map(Number);
+    return {verb: a[0], x, y};
+  });
+
+  // inputs[i]: {x, y, act, pr} for a human seat, null for a bot seat,
+  // {x, y, pr, work: [cx, cy] | null, receive} for a robot seat
   function step(inputs) {
     events = []; fx = []; pressed = [];
     const before = snap();
@@ -182,10 +213,28 @@ globalThis.__nl = (function () {
         if (p.held !== pre) via[i] = k === 'g' ? 'grab' : 'act';
       }
     }
+    // robot seats: uses and tips at their cells, in order
+    for (let i = 0; i < S.players.length; i++) {
+      if (seats[i].controller !== 'robot') continue;
+      const inp = inputs[i] || {x: S.players[i].x, y: S.players[i].y, pr: '', work: null, receive: false};
+      const p = S.players[i];
+      for (const a of robotActions(inp.pr)) {
+        const st = standFor(a.x, a.y, p, inp.x, inp.y);
+        if (!st || (a.verb !== 'u' && a.verb !== 't')) { ev({name: 'robot_reject', actor: i, verb: a.verb, cell: {x: a.x, y: a.y}}); continue; }
+        p.x = st.sx + .5; p.y = st.sy + .5; p.fx = st.dx; p.fy = st.dy;
+        curActor = i;
+        const pre = p.held;
+        if (a.verb === 'u') grab(p); else actDown(p);
+        if (p.held !== pre) via[i] = a.verb === 'u' ? 'grab' : 'act';
+        ev({name: 'robot_action', actor: i, verb: a.verb === 'u' ? 'use' : 'tip', cell: {x: a.x, y: a.y}, stand: {x: st.sx, y: st.sy}});
+      }
+      p.x = inp.x; p.y = inp.y;
+    }
     for (let i = 0; i < S.players.length; i++) {
       const inp = inputs[i];
       if (seats[i].controller === 'bot') continue;
       const p = S.players[i];
+      if (seats[i].controller === 'robot') { p.in.x = 0; p.in.y = 0; p.in.act = !!(inp && inp.work); continue; }
       p.in.x = inp ? inp.x : 0; p.in.y = inp ? inp.y : 0; p.in.act = inp ? !!inp.act : false;
     }
     const botPress = [];
@@ -202,14 +251,32 @@ globalThis.__nl = (function () {
     const mid = snap();
     heldDiff(before, mid, via);
     sayNew();
+    // robot seats during update(): at the basin while washing; no catch unless receiving
+    const restore = [];
+    for (let i = 0; i < S.players.length; i++) {
+      if (seats[i].controller !== 'robot') continue;
+      const inp = inputs[i] || {}, p = S.players[i];
+      if (inp.work) {
+        const st = standFor(inp.work[0], inp.work[1], p, p.x, p.y);
+        if (st) { p.x = st.sx + .5; p.y = st.sy + .5; p.fx = st.dx; p.fy = st.dy; } else p.in.act = false;
+      }
+      if (labCore) { S.lab = S.lab || {}; S.lab.receiving = !!inp.receive; }
+      else if (!inp.receive && !p.held && !inp.work) { p.held = RECV_BLOCK; }
+      restore.push([p, inp]);
+    }
     phase = 'update';
     update(DT);
     phase = 'idle';
+    for (const [p, inp] of restore) {
+      if (p.held === RECV_BLOCK) p.held = null;
+      if (inp.x !== undefined) { p.x = inp.x; p.y = inp.y; }
+    }
     const after = snap();
     heldDiff(mid, after, ['catch', 'catch']);
     worldDiff(before, after);
-    const applied = S.players.map((p, i) => [p.in.x, p.in.y, p.in.act ? 1 : 0,
-      seats[i].controller === 'bot' ? (botPress[i] || '') : ((inputs[i] && inputs[i].pr) || '')]);
+    const applied = S.players.map((p, i) => seats[i].controller === 'robot'
+      ? [inputs[i] ? inputs[i].x : p.x, inputs[i] ? inputs[i].y : p.y, p.in.act ? 1 : 0, (inputs[i] && inputs[i].pr) || '']
+      : [p.in.x, p.in.y, p.in.act ? 1 : 0, seats[i].controller === 'bot' ? (botPress[i] || '') : ((inputs[i] && inputs[i].pr) || '')]);
     return {tick: S.tick, over: S.over, events, fx, pressed: pressed.slice(), applied};
   }
 
@@ -267,12 +334,16 @@ export class SimWorld {
     this.started = false;
   }
 
-  /** seats: [{role:'bramble', controller:'human'|'bot', react?}, {role:'flit', ...}] in actor order. */
-  start(shift, seed, seats) {
+  /** seats: [{role:'bramble', controller:'human'|'bot'|'robot', react?}, {role:'flit', ...}] in actor order.
+   * opts.dt: the clock step (1/60, or 1/(60 k) for a robot room). opts.labCore: the core has the
+   * S.lab.receiving line of the robot task (otherwise a robot catch is blocked for one update instead). */
+  start(shift, seed, seats, opts = {}) {
     if (seats.length !== 2 || seats[0].role !== 'bramble' || seats[1].role !== 'flit') throw new Error('seats must be [bramble, flit]');
+    if (!seats.every((s) => ['human', 'bot', 'robot'].includes(s.controller))) throw new Error('controller must be human, bot or robot');
     this.seats = seats;
     this.started = true;
-    return this.api.start(shift, seed >>> 0, seats);
+    this.dt = opts.dt || 1 / 60;
+    return this.api.start(shift, seed >>> 0, seats, { dt: this.dt, labCore: !!opts.labCore || /S\.lab\b/.test(this.source.text) });
   }
 
   step(inputs) { return this.api.step(inputs); }

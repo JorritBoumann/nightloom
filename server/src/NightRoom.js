@@ -249,7 +249,8 @@ export class NightRoom extends Room {
     if (this.wantBot && !this.state.players.has(BOT_KEY)) this.addBot();
     this.updateLock();
     if (pid) {
-      const stored = await getJson(`${PLAYERS_PREFIX}/${pid}.json`);
+      // the player's history; a slow bucket must not hold up the join (3 s at most)
+      const stored = await Promise.race([getJson(`${PLAYERS_PREFIX}/${pid}.json`), new Promise((r) => setTimeout(() => r(null), 3000))]);
       if (stored && stored.rounds) for (const r of ROLES) for (const sh of SHIFTS) s.rounds[r][sh.id] = Number(stored.rounds?.[r]?.[sh.id]) || 0;
     }
     p.newcomer = !p.bot && this.totalRounds(s) === 0;

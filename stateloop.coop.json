@@ -1,0 +1,48 @@
+{
+  "manifest_version": "0.2",
+  "rules_version": "1",
+  "game": "nightloom",
+  "rooms": ["night"],
+  "server": {
+    "dir": "server",
+    "entry": "src/index.js",
+    "node": "22",
+    "include": ["src/data.js", "src/core.js", "src/bot.js", "online", "package.json"],
+    "healthcheck": "/__healthcheck",
+    "notes": "The server runs the unchanged src/data.js, src/core.js and src/bot.js in one VM context per room. online/sim.mjs is the step driver that the server, the converter and the tests share."
+  },
+  "frame": {
+    "up": "screen",
+    "unit_m": 1.0,
+    "unit": "one map tile; a robot task chooses its own scale",
+    "two_d": { "y": "down", "origin": "top-left corner of the map" },
+    "positions": "entity centres in tile units; a tile (x, y) spans [x, x+1) x [y, y+1) and its centre is (x + 0.5, y + 0.5)",
+    "yaw": "atan2(fy, fx): 0 points along +x; positive yaw turns from +x towards +y (clockwise on screen)"
+  },
+  "tick_hz": 60,
+  "levels": ["dusk", "midnight", "gale", "witching", "daybreak"],
+  "level_source": "src/data.js (LEVELS); every recording header also holds the map of its shift",
+  "roles": {
+    "bramble": { "actor": 0, "speed_tiles_s": 3.3, "radius": 0.34, "can": ["spin wool on the loom", "throw items over open sky"], "cannot": ["take stars", "cross open sky", "cross the bridge while it is out"] },
+    "flit": { "actor": 1, "speed_tiles_s": 4.6, "radius": 0.26, "can": ["take stars", "fly over open sky", "catch thrown items", "dash"], "cannot": ["spin"] }
+  },
+  "inputs": {
+    "frame": { "x": "move -1..1", "y": "move -1..1", "act": "work key held", "pn": "press counter", "pk": "kinds of the last 32 presses, newest in bit 0 (1 = work key)" },
+    "presses": { "g": "grab or place: grab(p)", "a": "work key: actDown(p) (throw, dash, tip out)" }
+  },
+  "intents": ["name", "role", "swap", "shift", "bot", "ready"],
+  "events": ["evt:episode_start", "evt:episode_end", "evt:grab", "evt:act", "evt:held", "evt:throw", "evt:catch", "evt:proj_end", "evt:deliver", "evt:expire", "evt:order", "evt:kettle", "evt:nightmare", "evt:spun", "evt:washed", "evt:jar_return", "evt:bridge", "evt:wind", "evt:lost"],
+  "cosmetic_messages": ["fx"],
+  "private_messages": ["net:ping"],
+  "recording": {
+    "format": "nightloom-online-v1",
+    "where": "bucket prefix nightloom/<date>/<room>-<room created ms>/ep<NNN>-<shift>.jsonl.gz",
+    "replay": "tools/convert.mjs rebuilds every step from the seed and the applied inputs and checks every hash"
+  },
+  "consent": {
+    "status": "notice_at_join",
+    "notice": "By joining a room you agree that the session is recorded as Stateloop play data. Please do not talk or chat with your partner while you play.",
+    "shown": "in the online lobby, next to Quick match / Create a room / Play with the bot / Join",
+    "platform": "players reach the game through the Stateloop play portal (signed in); the server cannot verify that per seat"
+  }
+}

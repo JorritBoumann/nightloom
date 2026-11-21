@@ -14,6 +14,7 @@ function keyHeld(p,a){return keySets(p).some(k=>k[a].some(code=>Input.held.has(c
 function humans(){return S?S.players.filter(p=>!p.bot):[]}
 
 addEventListener('keydown',e=>{
+  if(UI.mode==='net'){NET.keydown(e);return}
   if(UI.mode!=='play'){UI.menuKey(e);return}
   if(e.code==='Escape'||e.code==='KeyP'){e.preventDefault();UI.pause();return}
   if(GAME_KEYS.has(e.code))e.preventDefault();
